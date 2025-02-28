@@ -5,47 +5,13 @@ with lib; let
 
   send = pkgs.writeShellScript "netsecrets-send" ''
     echo "Sending secrets..."
-    command="${netsecrets}/bin/netsecrets send"
+    command="${netsecrets}/bin/netsecrets send --file-output /var/lib/netsecrets/"
     ${if cfg.requesting.server != "" then "command=\"$command --server " + cfg.requesting.server + "\"" else ""}
     ${if cfg.requesting.port != "" then "command=\"$command --port " + cfg.requesting.port + "\"" else ""}
     ${if cfg.requesting.password != "" then "command=\"$command --password " + cfg.requesting.password + "\"" else ""}
     ${if cfg.requesting.request_secrets != "" then "command=\"$command --request_secrets " + cfg.requesting.request_secrets + "\"" else ""}
     #${if cfg.authorize.secrets != [] then "command=\"$command --secrets " + lib.concatStringsSep " " (builtins.attrNames cfg.authorize.secrets) + "\"" else ""}
     ${if cfg.requesting.verbose then "command=\"$command --verbose\"" else ""}
-    echo "$command"
-      
-    #echo "Executing command: $command"
-      
-    ## Run the command and store the output
-    # secrets=$($command)
-
-    ## Debug: Output the secrets and verify they are being received correctly
-    #   echo "Secrets received: $secrets"
-      
-    ##   # List all the keys we're processing
-    #secret_names="${lib.concatStringsSep " " (builtins.attrNames cfg.authorize.secrets)}"
-    #echo "Secrets list: $secret_names"
-      
-    ## Loop through each secret and print details
-    #  for secret in $secret_names; do
-    #    echo "Processing secret: $secret"
-        
-    #    key=$(echo "$secret" | cut -d'=' -f1)
-    #    value=$(echo "$secret" | cut -d'=' -f2)
-        
-    #    echo "Key: $key"
-    #    echo "Value: $value"
-        
-    #    filePath="/var/lib/netsecrets/$key"
-
-    #    if [ -n "$filePath" ]; then
-    #      echo "$value" > "$filePath"
-    #      echo "Written secret '$key' to $filePath"
-    #      else
-    #       echo "No file path found for secret '$key'. Skipping."
-    #     fi
-    #    done
-
     $command
 
   '';

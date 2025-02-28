@@ -1,10 +1,10 @@
-// TODO: USE PASSWORD LIBRARY AND HASH MATCHING TO PREVENT TIMING ATTACKS
-
 use clap::{Parser, Subcommand};
 use ipnetwork::IpNetwork;
 use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
+use std::path::Path;
 
 #[derive(Parser)]
 #[command(name = "netsecrets")]
@@ -31,6 +31,9 @@ enum Commands {
 
         #[arg(short = 'v', long)]
         verbose: bool,
+
+        #[arg(long = "file-output")]
+        file_output: Option<String>, 
     },
 
     Receive {
@@ -135,13 +138,40 @@ fn start_server(ip: IpAddr, port: u16, password: String, secrets: HashMap<String
     }
 }
 
-fn send_request(ip: IpAddr, port: u16, password: String, request_secrets: String, verbose: bool) {
+fn send_request(ip: IpAddr, port: u16, password: String, request_secrets: String, verbose: bool, file_output: Option<String>) {
     let mut stream = TcpStream::connect((ip, port)).expect("Failed to connect to server");
     let message = format!("{} {}", password.trim(), request_secrets.trim());
     stream.write_all(message.as_bytes()).expect("Failed to send request");
     let mut response = String::new();
     stream.read_to_string(&mut response).expect("Failed to read response");
-    println!("{}", response);
+
+    if verbose {
+        println!("{}", response);
+    }
+
+    if let Some(directory) = file_output {
+        let path = Path::new(&directory);
+        if !path.exists() {
+            fs::create_dir_all(path).expect("Failed to create directory");
+        }
+    
+        for line in response.split(',') {
+            let parts: Vec<&str> = line.split('=').collect();
+            if parts.len() == 2 {
+                let filename = format!("{}/{}", directory, parts[0].trim());
+                let mut file = OpenOptions::new()
+                    .create(true)  
+                    .write(true)     
+                    .truncate(true)  
+                    .open(filename)
+                    .expect("Failed to open file");
+    
+                file.write_all(parts[1].as_bytes()).expect("Failed to write to file");
+            }
+        }
+    }
+    
+    
 }
 
 fn main() {
@@ -149,9 +179,9 @@ fn main() {
 
     match cli.command {
         Commands::Send {
-            server, port, password, request_secrets, verbose,
+            server, port, password, request_secrets, verbose, file_output
         } => {
-            send_request(server, port, password, request_secrets, verbose);
+            send_request(server, port, password, request_secrets, verbose, file_output);
         }
         Commands::Receive {
             authorized_ips, server, port, password, secrets, verbose,
