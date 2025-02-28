@@ -6,29 +6,68 @@ with lib; let
   send = pkgs.writeShellScript "netsecrets-send" ''
     echo "Sending secrets..."
     command="${netsecrets}/bin/netsecrets send"
-    ${if cfg.requesting.ip != "" then "command=\"$command --ip " + cfg.requesting.ip + "\"" else ""}
+    ${if cfg.requesting.server != "" then "command=\"$command --server " + cfg.requesting.server + "\"" else ""}
     ${if cfg.requesting.port != "" then "command=\"$command --port " + cfg.requesting.port + "\"" else ""}
     ${if cfg.requesting.password != "" then "command=\"$command --password " + cfg.requesting.password + "\"" else ""}
-    ${if cfg.requesting.request_secret != "" then "command=\"$command --request_secret " + cfg.requesting.request_secret + "\"" else ""}
+    ${if cfg.requesting.request_secrets != "" then "command=\"$command --request_secrets " + cfg.requesting.request_secrets + "\"" else ""}
+    #${if cfg.authorize.secrets != [] then "command=\"$command --secrets " + lib.concatStringsSep " " (builtins.attrNames cfg.authorize.secrets) + "\"" else ""}
     ${if cfg.requesting.verbose then "command=\"$command --verbose\"" else ""}
     echo "$command"
-    $command
-  '';
+      
+    #echo "Executing command: $command"
+      
+    ## Run the command and store the output
+    # secrets=$($command)
 
-  receive = pkgs.writeShellScript "netsecrets-receive" ''
-    echo "Receiving secrets..."
-    command="${netsecrets}/bin/netsecrets receive"
-    ${if cfg.authorize.ipOrRange != "" then "command=\"$command --authorized_ips " + cfg.authorize.ipOrRange + "\"" else ""}
-    ${if cfg.authorize.server != "" then "command=\"$command --server " + cfg.authorize.server + "\"" else ""}
-    ${if cfg.authorize.password != "" then "command=\"$command --password " + cfg.authorize.password + "\"" else ""}
-    ${if cfg.authorize.port != "" then "command=\"$command --port " + cfg.authorize.port + "\"" else ""}
-    ${if cfg.authorize.secrets != [] then "command=\"$command --secrets " + lib.concatStringsSep " " cfg.authorize.secrets + "\"" else ""}
-    ${if cfg.authorize.verbose then "command=\"$command --verbose\"" else ""}
-    echo "$command"
-    $command
-  '';
+    ## Debug: Output the secrets and verify they are being received correctly
+    #   echo "Secrets received: $secrets"
+      
+    ##   # List all the keys we're processing
+    #secret_names="${lib.concatStringsSep " " (builtins.attrNames cfg.authorize.secrets)}"
+    #echo "Secrets list: $secret_names"
+      
+    ## Loop through each secret and print details
+    #  for secret in $secret_names; do
+    #    echo "Processing secret: $secret"
+        
+    #    key=$(echo "$secret" | cut -d'=' -f1)
+    #    value=$(echo "$secret" | cut -d'=' -f2)
+        
+    #    echo "Key: $key"
+    #    echo "Value: $value"
+        
+    #    filePath="/var/lib/netsecrets/$key"
 
-secretsFiles = builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.requesting.secrets;
+    #    if [ -n "$filePath" ]; then
+    #      echo "$value" > "$filePath"
+    #      echo "Written secret '$key' to $filePath"
+    #      else
+    #       echo "No file path found for secret '$key'. Skipping."
+    #     fi
+    #    done
+
+    $command
+
+  '';
+receive = pkgs.writeShellScript "netsecrets-receive" ''
+  echo "Receiving secrets..."
+
+  # Prepare the command to receive secrets
+  command="${netsecrets}/bin/netsecrets receive"
+  ${if cfg.authorize.ipOrRange != "" then "command=\"$command --authorized-ips " + cfg.authorize.ipOrRange + "\"" else ""}
+  ${if cfg.authorize.server != "" then "command=\"$command --server " + cfg.authorize.server + "\"" else ""}
+  ${if cfg.authorize.password != "" then "command=\"$command --password " + cfg.authorize.password + "\"" else ""}
+  ${if cfg.authorize.port != "" then "command=\"$command --port " + cfg.authorize.port + "\"" else ""}
+  ${if cfg.authorize.secrets != {} then "command=\"$command --secrets " + lib.concatStringsSep "," (map (n: n + "=" + cfg.authorize.secrets.${n}) (builtins.attrNames cfg.authorize.secrets)) + "\"" else ""}
+  ${if cfg.authorize.verbose then "command=\"$command --verbose\"" else ""}
+  $command
+'';
+
+
+
+  secretsFiles = builtins.mapAttrs
+    (name: _value: "/var/lib/netsecrets/" + name)
+    cfg.authorize.secrets;
 
 in {
   options = {
@@ -40,7 +79,7 @@ in {
       };
 
       requesting = {
-        ip = mkOption {
+        server = mkOption {
           description = "IP address for requesting secrets.";
           type = types.str;
           default = "";
@@ -70,12 +109,17 @@ in {
           type = types.bool;
           default = false;
         };
-        secrets = mkOption {
-          description = "Mapping of secret names to file paths.";
-          type = types.attrsOf types.str;
-          default = {};
-        };
-        request_secret = mkOption {
+        # request_secret = mkOption {
+        #   description = "Secrets to request";
+        #   type = types.str;
+        #   default = false;
+        # };
+        # secrets = mkOption {
+        #   description = "Mapping of secret names to file paths.";
+        #   type = types.attrsOf types.str;
+        #   default = {};
+        # };
+        request_secrets = mkOption {
           description = "Secret to request specifically.";
           type = types.str;
           default = "";
@@ -114,9 +158,9 @@ in {
           default = false;
         };
         secrets = mkOption {
-          description = "List of secrets to authorize.";
-          type = types.listOf types.str;
-          default = [];
+          description = "Mapping of secret names to file paths.";
+          type = types.attrsOf types.str;
+          default = {};
         };
         port = mkOption {
           description = "Port for authorizing secrets.";
@@ -132,9 +176,9 @@ in {
     };
 
     secrets = mkOption {
-      type = types.attrsOf types.str;
+      description = "Mapping of secret names to file attribute sets (each with a file attribute).";
+      type = types.attrsOf (types.attrsOf types.str);
       default = {};
-      description = "Mapping of secret names to file paths.";
     };
   };
 
@@ -166,8 +210,8 @@ in {
         };
       };
     }
-  (mkIf cfg.enable {
-    secrets = secretsFiles;
-  })
+    (mkIf cfg.enable {
+      secrets = builtins.mapAttrs (name: path: { file = path; }) secretsFiles;
+    })
   ];
 }
