@@ -9,31 +9,28 @@ with lib; let
     ${if cfg.requesting.server != "" then "command=\"$command --server " + cfg.requesting.server + "\"" else ""}
     ${if cfg.requesting.port != "" then "command=\"$command --port " + cfg.requesting.port + "\"" else ""}
     ${if cfg.requesting.password != "" then "command=\"$command --password " + cfg.requesting.password + "\"" else ""}
-    ${if cfg.requesting.request_secrets != "" then "command=\"$command --request_secrets " + cfg.requesting.request_secrets + "\"" else ""}
-    #${if cfg.authorize.secrets != [] then "command=\"$command --secrets " + lib.concatStringsSep " " (builtins.attrNames cfg.authorize.secrets) + "\"" else ""}
+    ${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (lib.concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
     ${if cfg.requesting.verbose then "command=\"$command --verbose\"" else ""}
     $command
-
   '';
-receive = pkgs.writeShellScript "netsecrets-receive" ''
-  echo "Receiving secrets..."
-
-  # Prepare the command to receive secrets
-  command="${netsecrets}/bin/netsecrets receive"
-  ${if cfg.authorize.ipOrRange != "" then "command=\"$command --authorized-ips " + cfg.authorize.ipOrRange + "\"" else ""}
-  ${if cfg.authorize.server != "" then "command=\"$command --server " + cfg.authorize.server + "\"" else ""}
-  ${if cfg.authorize.password != "" then "command=\"$command --password " + cfg.authorize.password + "\"" else ""}
-  ${if cfg.authorize.port != "" then "command=\"$command --port " + cfg.authorize.port + "\"" else ""}
-  ${if cfg.authorize.secrets != {} then "command=\"$command --secrets " + lib.concatStringsSep "," (map (n: n + "=" + cfg.authorize.secrets.${n}) (builtins.attrNames cfg.authorize.secrets)) + "\"" else ""}
-  ${if cfg.authorize.verbose then "command=\"$command --verbose\"" else ""}
-  $command
-'';
-
-
+  
+  receive = pkgs.writeShellScript "netsecrets-receive" ''
+    echo "Receiving secrets..."
+  
+    # Prepare the command to receive secrets
+    command="${netsecrets}/bin/netsecrets receive"
+    ${if cfg.authorize.ipOrRange != "" then "command=\"$command --authorized-ips " + cfg.authorize.ipOrRange + "\"" else ""}
+    ${if cfg.authorize.server != "" then "command=\"$command --server " + cfg.authorize.server + "\"" else ""}
+    ${if cfg.authorize.password != "" then "command=\"$command --password " + cfg.authorize.password + "\"" else ""}
+    ${if cfg.authorize.port != "" then "command=\"$command --port " + cfg.authorize.port + "\"" else ""}${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (lib.concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
+   ${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (lib.concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
+    ${if cfg.authorize.verbose then "command=\"$command --verbose\"" else ""}
+    $command
+  '';
 
   secretsFiles = builtins.mapAttrs
     (name: _value: "/var/lib/netsecrets/" + name)
-    cfg.authorize.secrets;
+    cfg.authorize.secrets ++ cfg.requesting.request_secrets;
 
 in {
   options = {
@@ -75,20 +72,10 @@ in {
           type = types.bool;
           default = false;
         };
-        # request_secret = mkOption {
-        #   description = "Secrets to request";
-        #   type = types.str;
-        #   default = false;
-        # };
-        # secrets = mkOption {
-        #   description = "Mapping of secret names to file paths.";
-        #   type = types.attrsOf types.str;
-        #   default = {};
-        # };
         request_secrets = mkOption {
-          description = "Secret to request specifically.";
-          type = types.str;
-          default = "";
+          description = "Secrets to request specifically.";
+          type = types.listOf types.str;
+          default = [];
         };
         verbose = mkOption {
           description = "Enable verbose logging for requesting secrets.";
@@ -148,6 +135,7 @@ in {
     };
   };
 
+
   config = mkMerge [
     {
       systemd.tmpfiles.rules = [
@@ -156,14 +144,14 @@ in {
         "f ${attr} 0600 root root -") secretsFiles);
     }
     {
-      #TODO, look into using activation scripts if i can get them to run after wifi
-      # system.activationScripts.netsecrets-sender = {
-      #   text = send;
-        
-      # };
-      # system.activationScripts.netsecrets-receiver = {
-      #   text = receive;
-      # };
+    #TODO, look into using activation scripts if i can get them to run after wifi
+    # system.activationScripts.netsecrets-sender = {
+    #   text = send;
+      
+    # };
+    # system.activationScripts.netsecrets-receiver = {
+    #   text = receive;
+    # };
 
   # TODO, remove code if deemed useless
   # system.activationScripts.users-wait = {
