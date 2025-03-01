@@ -27,11 +27,10 @@ with lib; let
     ${if cfg.authorize.verbose then "command=\"$command --verbose\"" else ""}
     $command
   '';
-
-  secretsFiles = builtins.mapAttrs
-    (name: _value: "/var/lib/netsecrets/" + name)
-    cfg.authorize.secrets ++ cfg.requesting.request_secrets;
-
+  secretsFiles = lib.foldl' (acc: set: acc // set) {} [
+    (builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.authorize.secrets)
+    (builtins.listToAttrs (map (secret: { name = secret; value = "/var/lib/netsecrets/" + secret; }) cfg.requesting.request_secrets))
+  ];
 in {
   options = {
     netsecrets = {
