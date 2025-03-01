@@ -165,6 +165,21 @@ in {
       #   text = receive;
       # };
 
+  # TODO, remove code if deemed useless
+  # system.activationScripts.users-wait = {
+  #     text = ''
+  #       TARGET_FILE="/var/lib/netsecrets/secret1"  
+
+  #       while [ ! -s "$TARGET_FILE" ]; do
+  #         echo "Waiting for $TARGET_FILE to have content..."
+  #         sleep 1  
+  #       done
+
+  #       echo "$TARGET_FILE has content, continuing..."
+  #           '';
+  # };
+  # system.activationScripts.users.deps = ["users-wait"];
+  
   systemd.services.netsecrets-sender = {
     description = "NetSecrets Sender";
     wantedBy = [ "multi-user.target" ];
@@ -176,7 +191,6 @@ in {
       User = "root";
     };
   };
-
   systemd.services.netsecrets-receiver = {
     description = "NetSecrets Receiver";
     wantedBy = [ "multi-user.target" ];
