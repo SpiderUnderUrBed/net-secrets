@@ -177,7 +177,10 @@ in {
 
     }
     (mkIf cfg.enable {
-      secrets = builtins.mapAttrs (name: path: { file = path; }) secretsFiles;
+      secrets = builtins.mapAttrs (name: path: {
+        file = path;
+        value = mkDefault (builtins.readFile path);
+      }) secretsFiles;
     })
   ];
 }
