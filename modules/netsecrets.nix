@@ -156,14 +156,39 @@ in {
         "f ${attr} 0600 root root -") secretsFiles);
     }
     {
-      system.activationScripts.netsecrets-sender = {
-        text = send;
-        deps = [];
-      };
-      system.activationScripts.netsecrets-receiver = {
-        text = receive;
-        deps = [];
-      };
+      #TODO, look into using activation scripts if i can get them to run after wifi
+      # system.activationScripts.netsecrets-sender = {
+      #   text = send;
+        
+      # };
+      # system.activationScripts.netsecrets-receiver = {
+      #   text = receive;
+      # };
+
+  systemd.services.netsecrets-sender = {
+    description = "NetSecrets Sender";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = send;
+      Restart = "always";
+      User = "root";
+    };
+  };
+
+  systemd.services.netsecrets-receiver = {
+    description = "NetSecrets Receiver";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = receive;
+      Restart = "always";
+      User = "root";
+    };
+  };
+
     }
     (mkIf cfg.enable {
       secrets = builtins.mapAttrs (name: path: { file = path; }) secretsFiles;
