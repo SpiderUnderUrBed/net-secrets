@@ -156,24 +156,13 @@ in {
         "f ${attr} 0600 root root -") secretsFiles);
     }
     {
-      systemd.services.netsecrets-sender = {
-        description = "NetSecrets Sender";
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig = {
-          ExecStart = send;
-          Restart = "always";
-          User = "root";
-        };
+      system.activationScripts.netsecrets-sender = {
+        text = send;
+        deps = [];
       };
-
-      systemd.services.netsecrets-receiver = {
-        description = "NetSecrets Receiver";
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig = {
-          ExecStart = receive;
-          Restart = "always";
-          User = "root";
-        };
+      system.activationScripts.netsecrets-receiver = {
+        text = receive;
+        deps = [];
       };
     }
     (mkIf cfg.enable {
