@@ -3,41 +3,43 @@ with lib; let
   cfg = config.netsecrets;
   netsecrets = pkgs.callPackage ../pkgs/netsecrets.nix {};
 
+
+  # fallbacksAttrSet = listToAttrs (map (server: { name = server; value = server; }) cfg.requesting.fallbacks);
+  # authorizedIpAttrSet = listToAttrs (map (server: { name = server; value = server; }) cfg.requesting.ipOrRange);
+  # ${if fallbacksAttrSet != {} then "command=\"$command --fallbacks " + (concatStringsSep "," (builtins.attrValues fallbacksAttrSet)) + "\"" else ""}
+
   send = pkgs.writeShellScript "netsecrets-send" ''
     echo "Sending secrets..."
     command="${netsecrets}/bin/netsecrets send --file-output /var/lib/netsecrets/"
     ${if cfg.requesting.server != "" then "command=\"$command --server " + cfg.requesting.server + "\"" else ""}
     ${if cfg.requesting.port != "" then "command=\"$command --port " + cfg.requesting.port + "\"" else ""}
     ${if cfg.requesting.password != "" then "command=\"$command --password " + cfg.requesting.password + "\"" else ""}
-    ${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (lib.concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
+    ${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
+    ${if cfg.requesting.fallbacks != [] then "command=\"$command --fallbacks " + (concatStringsSep "," cfg.requesting.fallbacks) + "\"" else ""}
     ${if cfg.requesting.verbose then "command=\"$command --verbose\"" else ""}
     $command
   '';
-  
-receive = pkgs.writeShellScript "netsecrets-receive" ''
-  echo "Receiving secrets..."
 
-  # Initialize the command
-  cmd="${netsecrets}/bin/netsecrets receive"
-  
-  # Append to the command based on conditions
-  ${if cfg.authorize.ipOrRange != "" then "cmd=\"$cmd --authorized-ips ${cfg.authorize.ipOrRange}\"\n" else ""}
-  ${if cfg.authorize.server != "" then "cmd=\"$cmd --server ${cfg.authorize.server}\"\n" else ""}
-  ${if cfg.authorize.password != "" then "cmd=\"$cmd --password ${cfg.authorize.password}\"\n" else ""}
-  ${if cfg.authorize.port != "" then "cmd=\"$cmd --port ${cfg.authorize.port}\"\n" else ""}
-  ${if cfg.authorize.verbose then "cmd=\"$cmd --verbose\"\n" else ""}
-  
-  # Output the final command and run it
-  echo "$cmd"
-  $cmd
-'';
+  receive = pkgs.writeShellScript "netsecrets-receive" ''
+    echo "Receiving secrets..."
 
+    cmd="${netsecrets}/bin/netsecrets receive"
 
-secretsFiles = lib.foldl' (acc: set: acc // set) {} [
-  (builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.authorize.secrets)
-  (builtins.listToAttrs (map (secret: { name = secret; value = "/var/lib/netsecrets/" + secret; }) cfg.requesting.request_secrets))
-];
+    ${if cfg.authorize.ipOrRange != [] then "command=\"$command --authorized-ips " + (concatStringsSep "," cfg.authorize.ipOrRange) + "\"" else ""}
+    ${if cfg.authorize.server != "" then "cmd=\"$cmd --server ${cfg.authorize.server}\"\n" else ""}
+    ${if cfg.authorize.password != "" then "cmd=\"$cmd --password ${cfg.authorize.password}\"\n" else ""}
+    ${if cfg.authorize.port != "" then "cmd=\"$cmd --port ${cfg.authorize.port}\"\n" else ""}
+    ${if cfg.authorize.verbose then "cmd=\"$cmd --verbose\"\n" else ""}
+    ${if cfg.authorize.secrets != {} then "cmd=\"$cmd --secrets " + (concatStringsSep "," (builtins.attrNames cfg.authorize.secrets)) + "\"\n" else ""}
 
+    echo "$cmd"
+    $cmd
+  '';
+
+  secretsFiles = foldl' (acc: set: acc // set) {} [
+    (builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.authorize.secrets)
+    (builtins.listToAttrs (map (secret: { name = secret; value = "/var/lib/netsecrets/" + secret; }) cfg.requesting.request_secrets))
+  ];
 
 in {
   options = {
@@ -84,6 +86,11 @@ in {
           type = types.listOf types.str;
           default = [];
         };
+        fallbacks = mkOption {
+          description = "List of fallback servers.";
+          type = types.listOf types.str;
+          default = [];
+        };
         verbose = mkOption {
           description = "Enable verbose logging for requesting secrets.";
           type = types.bool;
@@ -93,9 +100,9 @@ in {
 
       authorize = {
         ipOrRange = mkOption {
-          description = "IP or range authorized to request secrets.";
-          type = types.str;
-          default = "";
+          description = "List of authorized ip ranges";
+          type = types.listOf types.str;
+          default = [];
         };
         server = mkOption {
           description = "Server address for authorizing secrets.";
@@ -142,7 +149,6 @@ in {
     };
   };
 
-
   config = mkMerge [
     {
       systemd.tmpfiles.rules = [
@@ -151,30 +157,28 @@ in {
         "f ${attr} 0600 root root -") secretsFiles);
     }
     {
-
-  systemd.services.netsecrets-sender = {
-    description = "NetSecrets Sender";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      ExecStart = send;
-      Restart = "always";
-      User = "root";
-    };
-  };
-  systemd.services.netsecrets-receiver = {
-    description = "NetSecrets Receiver";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      ExecStart = receive;
-      Restart = "always";
-      User = "root";
-    };
-  };
-
+      systemd.services.netsecrets-sender = {
+        description = "NetSecrets Sender";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        serviceConfig = {
+          ExecStart = send;
+          Restart = "always";
+          User = "root";
+        };
+      };
+      systemd.services.netsecrets-receiver = {
+        description = "NetSecrets Receiver";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        serviceConfig = {
+          ExecStart = receive;
+          Restart = "always";
+          User = "root";
+        };
+      };
     }
     (mkIf cfg.enable {
       secrets = builtins.mapAttrs (name: path: {
