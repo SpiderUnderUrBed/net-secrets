@@ -151,30 +151,7 @@ in {
         "f ${attr} 0600 root root -") secretsFiles);
     }
     {
-    #TODO, look into using activation scripts if i can get them to run after wifi
-    # system.activationScripts.netsecrets-sender = {
-    #   text = send;
-      
-    # };
-    # system.activationScripts.netsecrets-receiver = {
-    #   text = receive;
-    # };
 
-  # TODO, remove code if deemed useless
-  # system.activationScripts.users-wait = {
-  #     text = ''
-  #       TARGET_FILE="/var/lib/netsecrets/secret1"  
-
-  #       while [ ! -s "$TARGET_FILE" ]; do
-  #         echo "Waiting for $TARGET_FILE to have content..."
-  #         sleep 1  
-  #       done
-
-  #       echo "$TARGET_FILE has content, continuing..."
-  #           '';
-  # };
-  # system.activationScripts.users.deps = ["users-wait"];
-  
   systemd.services.netsecrets-sender = {
     description = "NetSecrets Sender";
     wantedBy = [ "multi-user.target" ];
