@@ -225,8 +225,8 @@ in {
           User = "root";
         };
       };
-      systemd.services.netsecrets-receiver = {
-        description = "NetSecrets Receiver";
+      systemd.services.netsecrets-daemon = {
+        description = "NetSecrets Daemon";
         wantedBy = ["multi-user.target"];
         after = ["network-online.target"];
         wants = ["network-online.target"];
