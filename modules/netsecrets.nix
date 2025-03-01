@@ -14,23 +14,31 @@ with lib; let
     $command
   '';
   
-  receive = pkgs.writeShellScript "netsecrets-receive" ''
-    echo "Receiving secrets..."
+receive = pkgs.writeShellScript "netsecrets-receive" ''
+  echo "Receiving secrets..."
+
+  # Initialize the command
+  cmd="${netsecrets}/bin/netsecrets receive"
   
-    # Prepare the command to receive secrets
-    command="${netsecrets}/bin/netsecrets receive"
-    ${if cfg.authorize.ipOrRange != "" then "command=\"$command --authorized-ips " + cfg.authorize.ipOrRange + "\"" else ""}
-    ${if cfg.authorize.server != "" then "command=\"$command --server " + cfg.authorize.server + "\"" else ""}
-    ${if cfg.authorize.password != "" then "command=\"$command --password " + cfg.authorize.password + "\"" else ""}
-    ${if cfg.authorize.port != "" then "command=\"$command --port " + cfg.authorize.port + "\"" else ""}${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (lib.concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
-   ${if cfg.requesting.request_secrets != [] then "command=\"$command --request_secrets " + (lib.concatStringsSep "," cfg.requesting.request_secrets) + "\"" else ""}
-    ${if cfg.authorize.verbose then "command=\"$command --verbose\"" else ""}
-    $command
-  '';
-  secretsFiles = lib.foldl' (acc: set: acc // set) {} [
-    (builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.authorize.secrets)
-    (builtins.listToAttrs (map (secret: { name = secret; value = "/var/lib/netsecrets/" + secret; }) cfg.requesting.request_secrets))
-  ];
+  # Append to the command based on conditions
+  ${if cfg.authorize.ipOrRange != "" then "cmd=\"$cmd --authorized-ips ${cfg.authorize.ipOrRange}\"\n" else ""}
+  ${if cfg.authorize.server != "" then "cmd=\"$cmd --server ${cfg.authorize.server}\"\n" else ""}
+  ${if cfg.authorize.password != "" then "cmd=\"$cmd --password ${cfg.authorize.password}\"\n" else ""}
+  ${if cfg.authorize.port != "" then "cmd=\"$cmd --port ${cfg.authorize.port}\"\n" else ""}
+  ${if cfg.authorize.verbose then "cmd=\"$cmd --verbose\"\n" else ""}
+  
+  # Output the final command and run it
+  echo "$cmd"
+  $cmd
+'';
+
+
+secretsFiles = lib.foldl' (acc: set: acc // set) {} [
+  (builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.authorize.secrets)
+  (builtins.listToAttrs (map (secret: { name = secret; value = "/var/lib/netsecrets/" + secret; }) cfg.requesting.request_secrets))
+];
+
+
 in {
   options = {
     netsecrets = {
