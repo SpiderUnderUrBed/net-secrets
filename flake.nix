@@ -22,6 +22,7 @@
       pkgs = import nixpkgs {inherit system;};
     in {
       netsecrets = pkgs.callPackage ./pkgs/netsecrets.nix {};
+      lib = import ./lib {inherit pkgs;};
       default = self.packages.${system}.netsecrets;
     });
   };
