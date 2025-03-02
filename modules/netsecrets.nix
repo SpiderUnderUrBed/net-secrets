@@ -1,249 +1,142 @@
 {
   config,
-  options,
   lib,
   pkgs,
   ...
-}:
-with lib; let
+}: let
   cfg = config.netsecrets;
-  netsecrets = pkgs.callPackage ../pkgs/netsecrets.nix {};
-
-  # fallbacksAttrSet = listToAttrs (map (server: { name = server; value = server; }) cfg.requesting.fallbacks);
-  # authorizedIpAttrSet = listToAttrs (map (server: { name = server; value = server; }) cfg.requesting.ipOrRange);
-  # ${if fallbacksAttrSet != {} then "command=\"$command --fallbacks " + (concatStringsSep "," (builtins.attrValues fallbacksAttrSet)) + "\"" else ""}
-
-  send = pkgs.writeShellScript "netsecrets-send" ''
-    echo "Sending secrets..."
-    command="${netsecrets}/bin/netsecrets send --file-output /var/lib/netsecrets/"
-    ${
-      if cfg.requesting.server != ""
-      then "command=\"$command --server " + cfg.requesting.server + "\""
-      else ""
-    }
-    ${
-      if cfg.requesting.port != ""
-      then "command=\"$command --port " + cfg.requesting.port + "\""
-      else ""
-    }
-    ${
-      if cfg.requesting.password != ""
-      then "command=\"$command --password " + cfg.requesting.password + "\""
-      else ""
-    }
-    ${
-      if cfg.requesting.request_secrets != []
-      then "command=\"$command --request_secrets " + (concatStringsSep "," cfg.requesting.request_secrets) + "\""
-      else ""
-    }
-    ${
-      if cfg.requesting.fallbacks != []
-      then "command=\"$command --fallbacks " + (concatStringsSep "," cfg.requesting.fallbacks) + "\""
-      else ""
-    }
-    ${
-      if cfg.requesting.verbose
-      then "command=\"$command --verbose\""
-      else ""
-    }
-    $command
-  '';
-
-  receive = pkgs.writeShellScript "netsecrets-receive" ''
-    echo "Receiving secrets..."
-
-    cmd="${netsecrets}/bin/netsecrets receive"
-
-    ${
-      if cfg.authorize.ipOrRange != []
-      then "command=\"$command --authorized-ips " + (concatStringsSep "," cfg.authorize.ipOrRange) + "\""
-      else ""
-    }
-    ${
-      if cfg.authorize.server != ""
-      then "cmd=\"$cmd --server ${cfg.authorize.server}\"\n"
-      else ""
-    }
-    ${
-      if cfg.authorize.password != ""
-      then "cmd=\"$cmd --password ${cfg.authorize.password}\"\n"
-      else ""
-    }
-    ${
-      if cfg.authorize.port != ""
-      then "cmd=\"$cmd --port ${cfg.authorize.port}\"\n"
-      else ""
-    }
-    ${
-      if cfg.authorize.verbose
-      then "cmd=\"$cmd --verbose\"\n"
-      else ""
-    }
-    ${
-      if cfg.authorize.secrets != {}
-      then "cmd=\"$cmd --secrets " + (concatStringsSep "," (builtins.attrNames cfg.authorize.secrets)) + "\"\n"
-      else ""
-    }
-
-    echo "$cmd"
-    $cmd
-  '';
-
-  secretsFiles = foldl' (acc: set: acc // set) {} [
-    (builtins.mapAttrs (name: _value: "/var/lib/netsecrets/" + name) cfg.authorize.secrets)
-    (builtins.listToAttrs (map (secret: {
-        name = secret;
-        value = "/var/lib/netsecrets/" + secret;
-      })
-      cfg.requesting.request_secrets))
-  ];
+  # Nixpkgs library with this flakes added functions
+  lib = lib // (import ../lib/default.nix {inherit pkgs;});
 in {
   options = {
     netsecrets = {
-      enable = mkOption {
-        type = types.bool;
+      enable = lib.mkOption {
+        type = lib.types.bool;
         default = false;
         description = "Enable the secrets platform.";
       };
 
-      requesting = {
-        server = mkOption {
-          description = "IP address for requesting secrets.";
-          type = types.str;
-          default = "";
-        };
-        port = mkOption {
-          description = "Port for requesting secrets.";
-          type = types.str;
-          default = "";
-        };
-        priority = mkOption {
-          description = "Priority for requesting secrets.";
-          type = types.int;
-          default = 0;
-        };
-        authenticate = mkOption {
-          description = "Authentication method for requesting secrets.";
-          type = types.str;
-          default = "password";
-        };
-        password = mkOption {
-          description = "Password for requesting secrets.";
-          type = types.str;
-          default = "";
-        };
-        signSelf = mkOption {
-          description = "Whether to sign the request to the server.";
-          type = types.bool;
-          default = false;
-        };
-        request_secrets = mkOption {
-          description = "Secrets to request specifically.";
-          type = types.listOf types.str;
-          default = [];
-        };
-        fallbacks = mkOption {
-          description = "List of fallback servers.";
-          type = types.listOf types.str;
-          default = [];
-        };
-        verbose = mkOption {
-          description = "Enable verbose logging for requesting secrets.";
-          type = types.bool;
-          default = false;
+      # NOTE: This is option would be used by the server.
+      #       You can declare the client as a local IP
+      #       in order to request secrets stored locally.
+      client = lib.mkOption {
+        type = lib.types.submodule {
+          options = {
+            ip = lib.mkOption {
+              description = "IP address for requesting secrets.";
+              type = lib.types.str;
+              default = "";
+            };
+            port = lib.mkOption {
+              description = "Port for requesting secrets.";
+              type = lib.types.str;
+              default = "";
+            };
+            verbose = lib.mkOption {
+              description = "Enable verbose logging for requesting secrets.";
+              type = lib.types.bool;
+              default = false;
+            };
+          };
         };
       };
 
-      authorize = {
-        ipOrRange = mkOption {
-          description = "List of authorized ip ranges";
-          type = types.listOf types.str;
-          default = [];
-        };
-        server = mkOption {
-          description = "Server address for authorizing secrets.";
-          type = types.str;
-          default = "";
-        };
-        authenticate = mkOption {
-          description = "Authentication method for authorizing secrets.";
-          type = types.str;
-          default = "password";
-        };
-        password = mkOption {
-          description = "Password for authorizing secrets.";
-          type = types.str;
-          default = "";
-        };
-        signSelf = mkOption {
-          description = "Whether to sign the authorization.";
-          type = types.bool;
-          default = false;
-        };
-        secrets = mkOption {
-          description = "Mapping of secret names to file paths.";
-          type = types.attrsOf types.str;
-          default = {};
-        };
-        port = mkOption {
-          description = "Port for authorizing secrets.";
-          type = types.str;
-          default = "";
-        };
-        verbose = mkOption {
-          description = "Enable verbose logging for authorizing secrets.";
-          type = types.bool;
-          default = false;
+      server = lib.mkOption {
+        type = lib.types.submodule {
+          options = {
+            ip = lib.mkOption {
+              description = "Server address for authorizing secrets.";
+              type = lib.types.str;
+              default = "";
+            };
+            port = lib.mkOption {
+              description = "Port for authorizing secrets.";
+              type = lib.types.port;
+              default = "";
+            };
+            secrets = lib.mkOption {
+              description = "Mapping of secret names to file paths.";
+              type = lib.types.attrsOf lib.types.secrets;
+              default = {};
+            };
+            verbose = lib.mkOption {
+              description = "Enable verbose logging for authorizing secrets.";
+              type = lib.types.bool;
+              default = false;
+            };
+          };
         };
       };
     };
 
-    secrets = mkOption {
-      description = "Mapping of secret names to file attribute sets (each with a file attribute).";
-      type = types.attrsOf (types.attrsOf types.str);
-      default = {};
+    secrets = lib.mkOption {
+      type = lib.types.submodule (
+        {config, ...}: {
+          config = {
+            secrets = lib.mkOptionDefault cfg.defaultSopsFile;
+            sopsFileHash = lib.mkOptionDefault (
+              lib.optionalString cfg.validateSopsFiles "${builtins.hashFile "sha256" config.sopsFile}"
+            );
+          };
+          options = {
+            name = lib.mkOption {
+              type = lib.types.str;
+              default = config._module.args.name;
+              description = ''
+                Name of the file used in /var/lib/netsecrets
+              '';
+            };
+            restartUnits = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              example = ["apparmor.service"];
+              description = ''
+                Names of units to be restarted upon activation of secret.
+              '';
+            };
+          };
+        }
+      );
     };
   };
 
-  config = mkMerge [
-    {
-      systemd.tmpfiles.rules =
+  config = lib.mkIf cfg.enable {
+    systemd = {
+      tmpfiles.rules =
         [
           "d /var/lib/netsecrets 0700 root root -"
         ]
-        ++ (mapAttrsToList (name: attr: "f ${attr} 0600 root root -") secretsFiles);
-    }
-    {
-      systemd.services.netsecrets-client = {
-        description = "NetSecrets Client";
-        wantedBy = ["multi-user.target"];
-        after = ["network-online.target"];
-        wants = ["network-online.target"];
-        serviceConfig = {
-          ExecStart = send;
-          Restart = "always";
-          User = "root";
+        ++ (lib.mapAttrsToList (name: attr: "f ${attr} 0600 root root -") cfg.secrets);
+      services = {
+        netsecrets-client = {
+          description = "NetSecrets Client";
+          wantedBy = ["multi-user.target"];
+          after = ["network-online.target"];
+          wants = ["network-online.target"];
+          serviceConfig = {
+            ExecStart = lib.send;
+            Restart = "always";
+            User = "root";
+          };
         };
-      };
-      systemd.services.netsecrets-daemon = {
-        description = "NetSecrets Daemon";
-        wantedBy = ["multi-user.target"];
-        after = ["network-online.target"];
-        wants = ["network-online.target"];
-        serviceConfig = {
-          ExecStart = receive;
-          Restart = "always";
-          User = "root";
+        netsecrets-daemon = {
+          description = "NetSecrets Daemon";
+          wantedBy = ["multi-user.target"];
+          after = ["network-online.target"];
+          wants = ["network-online.target"];
+          serviceConfig = {
+            ExecStart = lib.receive;
+            Restart = "always";
+            User = "root";
+          };
         };
+        secrets = builtins.mapAttrs (name: path:
+          {
+            file = path;
+            value = lib.mkDefault (builtins.readFile path);
+          }
+          cfg.secrets);
       };
-    }
-    (mkIf cfg.enable {
-      secrets =
-        builtins.mapAttrs (name: path: {
-          file = path;
-          value = mkDefault (builtins.readFile path);
-        })
-        secretsFiles;
-    })
-  ];
+    };
+  };
 }
