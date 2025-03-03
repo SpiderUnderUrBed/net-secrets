@@ -1,5 +1,0 @@
-cargo run -- recive --server 127.0.0.1 --port 8080 --password mypass --secrets "API_KEY=abc123" --secrets "DB_PASS=supersecret"
-
-cargo run -- send --ip 127.0.0.1 --port 8080 --password mypass --request-secret API_KEY
-
-cargo run -- recive --server 127.0.0.1 --port 8080 --authorized-ips 127.0.0.1/24 --password mypass --secrets API_KEY=abc123 --secrets DB_PASS=supersecret
