@@ -6,7 +6,11 @@
     systems.url = "github:nix-systems/default";
   };
 
-  outputs = { self, nixpkgs, systems }: let
+  outputs = {
+    self,
+    nixpkgs,
+    systems,
+  }: let
     eachSystem = nixpkgs.lib.genAttrs (import systems);
   in {
     nixosModules.netsecrets = ./modules/netsecrets.nix;
@@ -15,9 +19,10 @@
     overlays.default = import ./overlay.nix;
 
     packages = eachSystem (system: let
-      pkgs = import nixpkgs { inherit system; }; 
+      pkgs = import nixpkgs {inherit system;};
     in {
       netsecrets = pkgs.callPackage ./pkgs/netsecrets.nix {};
+      lib = import ./lib {inherit pkgs;};
       default = self.packages.${system}.netsecrets;
     });
   };
