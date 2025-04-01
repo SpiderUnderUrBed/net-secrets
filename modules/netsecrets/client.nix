@@ -3,13 +3,27 @@
 let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
-  # Define your secrets here
-  secretNames = [ "enableswarm" "enablek8s" ];
-  
   # Build the secrets attribute set with file paths
   secretsFiles = lib.foldl' (acc: secret: 
     acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
-  ) {} secretNames;
+  ) {} config.netsecrets.client.request_secrets;
+
+  # Helper to build the fetch command
+  buildFetchCmd = secret: let
+    cfg = config.netsecrets.client;
+  in ''
+    if ! ${netsecrets}/bin/netsecrets send \
+      --server ${lib.escapeShellArg cfg.server} \
+      --port ${toString cfg.port} \
+      ${lib.optionalString (cfg.password != "") "--password ${lib.escapeShellArg cfg.password}"} \
+      ${lib.optionalString cfg.verbose "--verbose"} \
+      --request_secrets ${lib.escapeShellArg secret} \
+      --file-output /var/lib/netsecrets/${lib.escapeShellArg secret} \
+      ${lib.optionalString (cfg.fallbacks != []) "--fallbacks ${lib.escapeShellArg (lib.concatStringsSep "," cfg.fallbacks)}"}; then
+      echo "Failed to fetch secret ${secret}" >&2
+      exit 1
+    fi
+  '';
 
 in {
   options.netsecrets.client = {
@@ -21,7 +35,6 @@ in {
 
     server = lib.mkOption {
       type = lib.types.str;
-      default = "";
       description = "Server IP address for requesting secrets";
     };
 
@@ -39,7 +52,6 @@ in {
 
     request_secrets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = secretNames;  # Use our predefined secret names
       description = "List of secrets to request from server";
     };
 
@@ -56,25 +68,17 @@ in {
     };
   };
 
-  options.secrets = lib.mkOption {
-    type = lib.types.attrsOf (lib.types.submodule {
-      options.file = lib.mkOption {
-        type = lib.types.path;
-        description = "Path to the secret file";
-      };
-    });
-    default = {};
-    description = "Mapping of secret names to their file paths";
-  };
-
   config = lib.mkIf config.netsecrets.client.enable {
-    secrets = lib.mkOverride 0 secretsFiles;
-
-    # Ensure secrets directory exists
-    system.activationScripts.netsecrets-dir = ''
-      mkdir -p /var/lib/netsecrets
-      chmod 700 /var/lib/netsecrets
-    '';
+    assertions = [
+      {
+        assertion = config.netsecrets.client.server != "";
+        message = "netsecrets.client.server must be set";
+      }
+      {
+        assertion = config.netsecrets.client.request_secrets != [];
+        message = "netsecrets.client.request_secrets must contain at least one secret";
+      }
+    ];
 
     # Set up tmpfiles for each secret
     systemd.tmpfiles.rules = 
@@ -88,24 +92,23 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      preStart = ''
+        mkdir -p /var/lib/netsecrets
+        chmod 700 /var/lib/netsecrets
+      '';
       serviceConfig = {
-        ExecStart = let
-          fetchCmd = secret: 
-            "${netsecrets}/bin/netsecrets send " +
-            "--server ${config.netsecrets.client.server} " +
-            "--port ${toString config.netsecrets.client.port} " +
-            (lib.optionalString (config.netsecrets.client.password != "") "--password ${lib.escapeShellArg config.netsecrets.client.password} ") +
-            (lib.optionalString config.netsecrets.client.verbose "--verbose ") +
-            "--request_secrets ${secret} " +
-            "--file-output /var/lib/netsecrets/${secret} " +
-            (lib.optionalString (config.netsecrets.client.fallbacks != []) "--fallbacks ${lib.concatStringsSep "," config.netsecrets.client.fallbacks}");
-        in pkgs.writeShellScript "fetch-secrets" ''
+        ExecStart = pkgs.writeShellScript "fetch-secrets" ''
           set -euo pipefail
-          ${lib.concatStringsSep "\n" (map fetchCmd config.netsecrets.client.request_secrets)}
+          ${lib.concatStringsSep "\n" (map buildFetchCmd config.netsecrets.client.request_secrets)}
         '';
         Restart = "on-failure";
         User = "root";
       };
     };
+
+    environment.etc = lib.mapAttrs' (name: path: {
+      name = "secrets/${name}";
+      value = { source = path; };
+    }) secretsFiles;
   };
 }
