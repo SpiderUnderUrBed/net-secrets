@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 
 let
-  netsecrets = pkgs.callPackage ../pkgs/netsecrets.nix {};
+  netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
   # Build the secrets attribute set with file paths
   secretsFiles = lib.foldl' (acc: secret: 
