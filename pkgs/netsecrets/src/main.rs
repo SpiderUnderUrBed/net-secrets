@@ -5,7 +5,7 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Parser)]
@@ -171,6 +171,15 @@ fn query_fallback(ip: IpAddr, port: u16, password: &str, secret: &str, verbose: 
     }
 }
 
+fn is_directory(path: &Path) -> bool {
+    if path.exists() {
+        path.is_dir()
+    } else {
+        let path_str = path.to_str().unwrap_or("");
+        path_str.ends_with('/') || path_str.ends_with(std::path::MAIN_SEPARATOR)
+    }
+}
+
 fn send_request(
     server: IpAddr,
     port: u16,
@@ -232,7 +241,6 @@ fn send_request(
         }
     }
 
-    // Try fallbacks for any missing secrets
     if let Some(fallback_ips) = fallbacks {
         let missing: Vec<_> = request_secrets.split(',')
             .filter(|name| !secrets.contains_key(*name))
@@ -252,26 +260,48 @@ fn send_request(
         println!("Received secrets: {:?}", secrets);
     }
 
-    if let Some(dir) = file_output {
-        // Create directory if needed (ignore if exists)
-        if let Err(e) = fs::create_dir_all(&dir) {
-            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                panic!("Failed to create output directory: {}", e);
-            }
-        }
+    if let Some(output_path) = file_output {
+        let output_path = PathBuf::from(output_path);
         
-        for (name, value) in secrets {
-            let path = Path::new(&dir).join(name);
-            // Open file with create+truncate to overwrite
+        if is_directory(&output_path) {
+            fs::create_dir_all(&output_path).unwrap_or_else(|e| {
+                if e.kind() != std::io::ErrorKind::AlreadyExists {
+                    panic!("Failed to create output directory: {}", e);
+                }
+            });
+            
+            for (name, value) in secrets {
+                let secret_path = output_path.join(name);
+                let mut file = fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&secret_path)
+                    .unwrap_or_else(|e| panic!("Failed to open file {:?}: {}", secret_path, e));
+                
+                file.write_all(value.as_bytes())
+                    .unwrap_or_else(|e| panic!("Failed to write to file {:?}: {}", secret_path, e));
+            }
+        } else {
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).unwrap_or_else(|e| {
+                    if e.kind() != std::io::ErrorKind::AlreadyExists {
+                        panic!("Failed to create parent directory: {}", e);
+                    }
+                });
+            }
+            
             let mut file = fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
-                .open(&path)
-                .expect(&format!("Failed to open file: {:?}", path));
+                .open(&output_path)
+                .unwrap_or_else(|e| panic!("Failed to open file {:?}: {}", output_path, e));
             
-            file.write_all(value.as_bytes())
-                .expect(&format!("Failed to write to file: {:?}", path));
+            for (_, value) in secrets {
+                writeln!(file, "{}", value)
+                    .unwrap_or_else(|e| panic!("Failed to write to file {:?}: {}", output_path, e));
+            }
         }
     }
 }
