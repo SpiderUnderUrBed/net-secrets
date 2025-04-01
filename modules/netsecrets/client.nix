@@ -53,8 +53,13 @@ in {
     };
   };
 
+  options.secrets = lib.mkOption {
+    type = lib.types.attrsOf (lib.types.attrs);
+    default = {};
+    description = "Mapping of secret names to their file paths.";
+  };
+
   config = lib.mkIf config.netsecrets.client.enable {
-    # Forcefully define secrets at the config level without declaring it as an option
     secrets = lib.mkOverride 0 (lib.mapAttrs (name: path: { file = path; }) secretsFiles);
 
     # Ensure secrets directory exists
