@@ -3,31 +3,13 @@
 let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
+  # Define your secrets here
+  secretNames = [ "enableswarm" "enablek8s" ];
+  
   # Build the secrets attribute set with file paths
   secretsFiles = lib.foldl' (acc: secret: 
     acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
-  ) {} config.netsecrets.client.request_secrets;
-
-  # Helper function to build the netsecrets command with flags
-  buildNetsecretsCommand = secret: let
-    cfg = config.netsecrets.client;
-    outputFile = "/var/lib/netsecrets/${secret}";
-  in
-    ''
-      # First ensure the parent directory exists
-      mkdir -p "$(dirname ${outputFile})"
-      chmod 700 "$(dirname ${outputFile})"
-      
-      # Then execute the command with direct file output
-      ${netsecrets}/bin/netsecrets send \
-        --server ${lib.escapeShellArg cfg.server} \
-        --port ${toString cfg.port} \
-        ${lib.optionalString (cfg.password != "") "--password ${lib.escapeShellArg cfg.password}"} \
-        ${lib.optionalString cfg.verbose "--verbose"} \
-        --request_secrets ${lib.escapeShellArg secret} \
-        --file-output ${lib.escapeShellArg outputFile} \
-        ${lib.optionalString (cfg.fallbacks != []) "--fallbacks ${lib.escapeShellArg (lib.concatStringsSep "," cfg.fallbacks)}"}
-    '';
+  ) {} secretNames;
 
 in {
   options.netsecrets.client = {
@@ -57,7 +39,7 @@ in {
 
     request_secrets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [];
+      default = secretNames;  # Use our predefined secret names
       description = "List of secrets to request from server";
     };
 
@@ -74,13 +56,25 @@ in {
     };
   };
 
+  options.secrets = lib.mkOption {
+    type = lib.types.attrsOf (lib.types.submodule {
+      options.file = lib.mkOption {
+        type = lib.types.path;
+        description = "Path to the secret file";
+      };
+    });
+    default = {};
+    description = "Mapping of secret names to their file paths";
+  };
+
   config = lib.mkIf config.netsecrets.client.enable {
-    assertions = [
-      {
-        assertion = config.netsecrets.client.server != "";
-        message = "netsecrets.client.server must be set";
-      }
-    ];
+    secrets = lib.mkOverride 0 secretsFiles;
+
+    # Ensure secrets directory exists
+    system.activationScripts.netsecrets-dir = ''
+      mkdir -p /var/lib/netsecrets
+      chmod 700 /var/lib/netsecrets
+    '';
 
     # Set up tmpfiles for each secret
     systemd.tmpfiles.rules = 
@@ -95,14 +89,19 @@ in {
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
-        ExecStart = pkgs.writeShellScript "fetch-secrets" ''
+        ExecStart = let
+          fetchCmd = secret: 
+            "${netsecrets}/bin/netsecrets send " +
+            "--server ${config.netsecrets.client.server} " +
+            "--port ${toString config.netsecrets.client.port} " +
+            (lib.optionalString (config.netsecrets.client.password != "") "--password ${lib.escapeShellArg config.netsecrets.client.password} ") +
+            (lib.optionalString config.netsecrets.client.verbose "--verbose ") +
+            "--request_secrets ${secret} " +
+            "--file-output /var/lib/netsecrets/${secret} " +
+            (lib.optionalString (config.netsecrets.client.fallbacks != []) "--fallbacks ${lib.concatStringsSep "," config.netsecrets.client.fallbacks}");
+        in pkgs.writeShellScript "fetch-secrets" ''
           set -euo pipefail
-          # Ensure base directory exists with correct permissions
-          mkdir -p /var/lib/netsecrets
-          chmod 700 /var/lib/netsecrets
-          
-          # Fetch each secret
-          ${lib.concatStringsSep "\n" (map buildNetsecretsCommand config.netsecrets.client.request_secrets)}
+          ${lib.concatStringsSep "\n" (map fetchCmd config.netsecrets.client.request_secrets)}
         '';
         Restart = "on-failure";
         User = "root";
