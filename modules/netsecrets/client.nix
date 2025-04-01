@@ -1,61 +1,100 @@
 { config, lib, pkgs, ... }:
 
 let
-  netsecrets = import ../lib/default.nix { inherit pkgs; };
-  
-  # Function to build secrets attribute set
-  makeSecrets = names: lib.foldl' (acc: name: 
-    acc // { "${name}" = { file = "/var/lib/netsecrets/${name}"; }; }
-  ) {} names;
+  netsecrets = pkgs.callPackage ../pkgs/netsecrets.nix {};
+
+  # Build the secrets attribute set with file paths
+  secretsFiles = lib.foldl' (acc: secret: 
+    acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
+  ) {} config.netsecrets.client.request_secrets;
 
 in {
-  options = {
-    netsecrets.client = {
-      enable = lib.mkEnableOption "the netsecrets client";
-      secrets = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "List of secret names to fetch";
-      };
-      ip = lib.mkOption {
-        type = lib.types.str;
-        description = "Netsecrets server IP";
-      };
+  options.netsecrets.client = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Enable the secrets client";
     };
 
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule {
-        options.file = lib.mkOption {
-          type = lib.types.path;
-          description = "Path to secret file";
-        };
-      });
-      default = {};
-      internal = true;
+    server = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Server IP address for requesting secrets";
+    };
+
+    port = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Server port for requesting secrets";
+    };
+
+    password = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Password for requesting secrets";
+    };
+
+    request_secrets = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "List of secrets to request from server";
+    };
+
+    fallbacks = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "List of fallback servers";
+    };
+
+    verbose = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Enable verbose logging";
     };
   };
 
   config = lib.mkIf config.netsecrets.client.enable {
-    # Initialize secrets using foldl
-    secrets = makeSecrets config.netsecrets.client.secrets;
+    # Initialize secrets configuration
+    secrets = lib.mapAttrs (name: path: {
+      file = path;
+    }) secretsFiles;
 
+    # Ensure secrets directory exists
     system.activationScripts.netsecrets-dir = ''
       mkdir -p /var/lib/netsecrets
       chmod 700 /var/lib/netsecrets
     '';
 
+    # Set up tmpfiles for each secret
+    systemd.tmpfiles.rules = 
+      lib.mapAttrsToList (name: path: 
+        "f ${path} 0600 root root -"
+      ) secretsFiles;
+
+    # Client service to fetch secrets
     systemd.services.netsecrets-client = {
-      description = "Fetch secrets from server";
-      wantedBy = ["multi-user.target"];
-      after = ["network-online.target"];
+      description = "NetSecrets Client";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
       serviceConfig = {
         ExecStart = let
-          fetchCmd = name: 
-            "${netsecrets.send} fetch ${name} --output ${config.secrets.${name}.file}";
+          fetchCmd = secret: 
+            "${netsecrets}/bin/netsecrets fetch ${secret} --output /var/lib/netsecrets/${secret}";
         in pkgs.writeShellScript "fetch-secrets" ''
-          ${toString (map fetchCmd config.netsecrets.client.secrets)}
+          set -e
+          ${lib.concatStringsSep "\n" (map fetchCmd config.netsecrets.client.request_secrets)}
         '';
+        Restart = "on-failure";
         User = "root";
+        Environment = [
+          "NETSECRETS_SERVER=${config.netsecrets.client.server}"
+          "NETSECRETS_PORT=${toString config.netsecrets.client.port}"
+          ${lib.optionalString (config.netsecrets.client.password != "") 
+            "NETSECRETS_PASSWORD=${config.netsecrets.client.password}"}
+          ${lib.optionalString config.netsecrets.client.verbose 
+            "NETSECRETS_VERBOSE=1"}
+        ];
       };
     };
   };
