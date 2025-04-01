@@ -54,10 +54,8 @@ in {
   };
 
   config = lib.mkIf config.netsecrets.client.enable {
-    # Initialize secrets configuration
-    secrets = lib.mapAttrs (name: path: {
-      file = path;
-    }) secretsFiles;
+    # Forcefully define secrets at the config level without declaring it as an option
+    secrets = lib.mkOverride 0 (lib.mapAttrs (name: path: { file = path; }) secretsFiles);
 
     # Ensure secrets directory exists
     system.activationScripts.netsecrets-dir = ''
@@ -95,7 +93,6 @@ in {
             "NETSECRETS_PASSWORD=${config.netsecrets.client.password}"
           ++ lib.optional config.netsecrets.client.verbose 
             "NETSECRETS_VERBOSE=1";
-
       };
     };
   };
