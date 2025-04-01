@@ -21,8 +21,8 @@ enum Commands {
     Send {
         #[arg(short, long)]
         server: Option<IpAddr>,
-        #[arg(short, long, default_value_t = 8080)]
-        port: u16,
+        #[arg(short, long)]
+        port: Option<u16>,
         #[arg(short = 'P', long)]
         password: Option<String>,
         #[arg(short = 'r', long = "request_secrets")]
@@ -41,8 +41,8 @@ enum Commands {
         server: Option<IpAddr>,
         #[arg(short = 'P', long)]
         password: Option<String>,
-        #[arg(short, long, default_value_t = 8080)]
-        port: u16,
+        #[arg(short, long)]
+        port: Option<u16>,
         #[arg(short = 'S', long)]
         secrets: Vec<String>,
         #[arg(short = 'v', long)]
@@ -138,9 +138,9 @@ fn start_server(
 
 fn query_fallback(ip: IpAddr, port: u16, password: &str, secret: &str, verbose: bool) -> Option<String> {
     let socket = SocketAddr::new(ip, port);
-    match TcpStream::connect_timeout(&socket, Duration::from_secs(2)) {
+    match TcpStream::connect_timeout(&socket, Duration::from_secs(5)) {
         Ok(mut stream) => {
-            stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+            stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
             let message = format!("{} {}", password, secret);
             
             if verbose {
@@ -181,7 +181,7 @@ fn send_request(
     fallbacks: Option<Vec<IpAddr>>,
 ) {
     let socket = SocketAddr::new(server, port);
-    let mut stream = match TcpStream::connect_timeout(&socket, Duration::from_secs(2)) {
+    let mut stream = match TcpStream::connect_timeout(&socket, Duration::from_secs(5)) {
         Ok(s) => s,
         Err(e) => {
             if verbose {
@@ -190,7 +190,7 @@ fn send_request(
             if let Some(fallback_ips) = &fallbacks {
                 for &ip in fallback_ips {
                     let fallback_socket = SocketAddr::new(ip, port);
-                    match TcpStream::connect_timeout(&fallback_socket, Duration::from_secs(2)) {
+                    match TcpStream::connect_timeout(&fallback_socket, Duration::from_secs(5)) {
                         Ok(s) => {
                             if verbose {
                                 println!("Connected to fallback {}", ip);
@@ -209,7 +209,7 @@ fn send_request(
         }
     };
 
-    stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let message = format!("{} {}", password, request_secrets);
     stream.write_all(message.as_bytes()).expect("Failed to send request");
 
@@ -253,10 +253,25 @@ fn send_request(
     }
 
     if let Some(dir) = file_output {
-        fs::create_dir_all(&dir).expect("Failed to create output directory");
+        // Create directory if needed (ignore if exists)
+        if let Err(e) = fs::create_dir_all(&dir) {
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                panic!("Failed to create output directory: {}", e);
+            }
+        }
+        
         for (name, value) in secrets {
             let path = Path::new(&dir).join(name);
-            fs::write(path, value).expect("Failed to write secret file");
+            // Open file with create+truncate to overwrite
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .expect(&format!("Failed to open file: {:?}", path));
+            
+            file.write_all(value.as_bytes())
+                .expect(&format!("Failed to write to file: {:?}", path));
         }
     }
 }
@@ -275,6 +290,7 @@ fn main() {
             fallbacks,
         } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
+            let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
             let password = get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password");
             let request_secrets = get_env_var_or_required_arg(
                 "NETSECRETS_REQUEST_SECRETS", 
@@ -302,6 +318,7 @@ fn main() {
             verbose,
         } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
+            let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
             let password = get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password");
 
             let secrets_map: HashMap<_, _> = secrets
