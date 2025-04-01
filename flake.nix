@@ -13,7 +13,7 @@
   }: let
     eachSystem = nixpkgs.lib.genAttrs (import systems);
   in {
-    nixosModules.netsecrets = ./modules/netsecrets.nix;
+    nixosModules.netsecrets = ./modules/netsecrets/default.nix;
     nixosModules.default = self.nixosModules.netsecrets;
 
     overlays.default = import ./overlay.nix;

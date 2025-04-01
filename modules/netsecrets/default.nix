@@ -1,4 +1,4 @@
 { ... }:
 {
-imports = [ ./server.nix ./client.nix ]
+imports = [ ./server.nix ./client.nix ];
 }

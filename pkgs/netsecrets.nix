@@ -1,8 +1,12 @@
-{buildRustPackage}:
-buildRustPackage {
+{ lib
+, stdenv
+, rustPlatform
+}:
+
+rustPlatform.buildRustPackage {
   pname = "netsecrets";
   version = "0.0.1";
-  src = ./netsecrets;
+  src = ./netsecrets;  
   cargoLock = {
     lockFile = ./netsecrets/Cargo.lock;
   };
