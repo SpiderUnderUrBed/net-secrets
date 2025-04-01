@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use ipnetwork::IpNetwork;
 use std::collections::HashMap;
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
@@ -18,33 +19,33 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Send {
-        #[arg(short, long)]
+        #[arg(short, long, env = "NETSECRETS_SERVER")]
         server: IpAddr,
-        #[arg(short, long, default_value_t = 8080)]
+        #[arg(short, long, default_value_t = 8080, env = "NETSECRETS_PORT")]
         port: u16,
-        #[arg(short = 'P', long)]
+        #[arg(short = 'P', long, env = "NETSECRETS_PASSWORD")]
         password: String,
-        #[arg(short = 'r', long = "request_secrets")]
+        #[arg(short = 'r', long = "request_secrets", env = "NETSECRETS_REQUEST_SECRETS")]
         request_secrets: String,
-        #[arg(short = 'v', long)]
+        #[arg(short = 'v', long, env = "NETSECRETS_VERBOSE")]
         verbose: bool,
-        #[arg(long = "file-output")]
+        #[arg(long = "file-output", alias = "output", env = "NETSECRETS_FILE_OUTPUT")]
         file_output: Option<String>,
-        #[arg(long = "fallbacks")]
+        #[arg(long = "fallbacks", env = "NETSECRETS_FALLBACKS")]
         fallbacks: Option<String>,
     },
     Receive {
-        #[arg(short = 'a', long, value_delimiter = ',')]
+        #[arg(short = 'a', long, value_delimiter = ',', env = "NETSECRETS_AUTHORIZED_IPS")]
         authorized_ips: Vec<IpNetwork>,
-        #[arg(short, long)]
+        #[arg(short, long, env = "NETSECRETS_SERVER")]
         server: IpAddr,
-        #[arg(short = 'P', long)]
+        #[arg(short = 'P', long, env = "NETSECRETS_PASSWORD")]
         password: String,
-        #[arg(short, long, default_value_t = 8080)]
+        #[arg(short, long, default_value_t = 8080, env = "NETSECRETS_PORT")]
         port: u16,
-        #[arg(short = 'S', long)]
+        #[arg(short = 'S', long, env = "NETSECRETS_SECRETS")]
         secrets: Vec<String>,
-        #[arg(short = 'v', long)]
+        #[arg(short = 'v', long, env = "NETSECRETS_VERBOSE")]
         verbose: bool,
     },
 }
