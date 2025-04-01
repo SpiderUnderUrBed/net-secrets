@@ -4,53 +4,48 @@ let
   cfg = config.netsecrets.client;
   netsecrets = import ../lib/default.nix { inherit pkgs; };
 
-  makeSecretOption = name: lib.mkOption {
-    type = lib.types.submodule {
-      options = {
-        file = lib.mkOption {
-          type = lib.types.path;
-          default = "/var/lib/netsecrets/${name}";
-          description = "Path where the secret will be stored";
-        };
-        value = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = "The secret value";
-        };
-        restartUnits = lib.mkOption {
-          type = lib.types.listOf lib.types.str;
-          default = [];
-          description = "Units to restart when this secret changes";
-        };
+  secretType = lib.types.submodule {
+    options = {
+      file = lib.mkOption {
+        type = lib.types.path;
+        description = "Path where the secret will be stored";
+      };
+      value = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "The secret value";
+      };
+      restartUnits = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "Units to restart when this secret changes";
       };
     };
-    default = {};
-    description = "Configuration for secret ${name}";
   };
-
-  secretsOptions = builtins.listToAttrs 
-    (map (name: { name = name; value = makeSecretOption name; }) 
-    cfg.requestedSecrets);
 
 in {
   options.netsecrets.client = {
     enable = lib.mkEnableOption "the netsecrets client";
+
     requestedSecrets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
       example = ["dockerswarm" "k8stoken"];
       description = "List of secret names to request from server";
     };
+
     ip = lib.mkOption {
       type = lib.types.str;
       default = "";
       description = "IP address for requesting secrets";
     };
+
     port = lib.mkOption {
       type = lib.types.port;
       default = 8080;
       description = "Port for requesting secrets";
     };
+
     verbose = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -58,7 +53,11 @@ in {
     };
   };
 
-  options.netsecrets.secrets = secretsOptions;
+  options.netsecrets.secrets = lib.mkOption {
+    type = lib.types.attrsOf secretType;
+    default = {};
+    description = "Configuration for individual secrets";
+  };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
@@ -66,7 +65,7 @@ in {
         mkdir -p /var/lib/netsecrets
         chmod 700 /var/lib/netsecrets
       '';
-      
+
       systemd.services.netsecrets-client = {
         description = "NetSecrets Client";
         wantedBy = ["multi-user.target"];
@@ -87,6 +86,16 @@ in {
       '';
     }
 
+    # Automatically create default secret configurations for requested secrets
+    (lib.listToAttrs (map (name: lib.nameValuePair name {
+      netsecrets.secrets.${name} = {
+        file = "/var/lib/netsecrets/${name}";
+        value = null;
+        restartUnits = [];
+      };
+    }) cfg.requestedSecrets))
+
+    # Create fetch services for all secrets (both requested and manually configured)
     (lib.mapAttrs (name: secret: {
       systemd.services."netsecrets-fetch-${name}" = {
         description = "Fetch secret ${name}";
@@ -101,6 +110,7 @@ in {
       };
     }) config.netsecrets.secrets)
 
+    # Create restart services where needed
     (lib.mapAttrs (name: secret: lib.optionalAttrs (secret.restartUnits != []) {
       systemd.services."netsecrets-restart-${name}" = {
         description = "Restart services for secret ${name}";
