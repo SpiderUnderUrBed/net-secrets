@@ -83,7 +83,7 @@ in {
       serviceConfig = {
         ExecStart = let
           fetchCmd = secret: 
-            "${netsecrets}/bin/netsecrets fetch ${secret} --output /var/lib/netsecrets/${secret}";
+            "${netsecrets}/bin/netsecrets send --request_secrets ${secret} --file-output /var/lib/netsecrets/${secret}";
         in pkgs.writeShellScript "fetch-secrets" ''
           set -e
           ${lib.concatStringsSep "\n" (map fetchCmd config.netsecrets.client.request_secrets)}
