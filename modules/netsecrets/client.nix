@@ -8,6 +8,20 @@ let
     acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
   ) {} config.netsecrets.client.request_secrets;
 
+  # Helper function to build the netsecrets command with flags
+  buildNetsecretsCommand = secret: let
+    cfg = config.netsecrets.client;
+  in
+    "${netsecrets}/bin/netsecrets send " +
+    "--server ${cfg.server} " +
+    "--port ${toString cfg.port} " +
+    (lib.optionalString (cfg.password != "") "--password ${lib.escapeShellArg cfg.password} ") +
+    (lib.optionalString cfg.verbose "--verbose ") +
+    "--request_secrets ${secret} " +
+    "--file-output /var/lib/netsecrets/${secret} " +
+    (lib.optionalString (cfg.fallbacks != []) 
+      "--fallbacks ${lib.concatStringsSep "," cfg.fallbacks}");
+
 in {
   options.netsecrets.client = {
     enable = lib.mkOption {
@@ -23,8 +37,8 @@ in {
     };
 
     port = lib.mkOption {
-      type = lib.types.str;
-      default = "";
+      type = lib.types.port;  # Changed to port type for validation
+      default = 8081;
       description = "Server port for requesting secrets";
     };
 
@@ -60,6 +74,13 @@ in {
   };
 
   config = lib.mkIf config.netsecrets.client.enable {
+    assertions = [
+      {
+        assertion = config.netsecrets.client.server != "";
+        message = "netsecrets.client.server must be set";
+      }
+    ];
+
     secrets = lib.mkOverride 0 (lib.mapAttrs (name: path: { file = path; }) secretsFiles);
 
     # Ensure secrets directory exists
@@ -81,23 +102,12 @@ in {
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
-        ExecStart = let
-          fetchCmd = secret: 
-            "${netsecrets}/bin/netsecrets send --request_secrets ${secret} --file-output /var/lib/netsecrets/${secret}";
-        in pkgs.writeShellScript "fetch-secrets" ''
-          set -e
-          ${lib.concatStringsSep "\n" (map fetchCmd config.netsecrets.client.request_secrets)}
+        ExecStart = pkgs.writeShellScript "fetch-secrets" ''
+          set -euo pipefail
+          ${lib.concatStringsSep "\n" (map buildNetsecretsCommand config.netsecrets.client.request_secrets)}
         '';
         Restart = "on-failure";
         User = "root";
-        Environment =
-          [ "NETSECRETS_SERVER=${config.netsecrets.client.server}"
-            "NETSECRETS_PORT=${toString config.netsecrets.client.port}"
-          ]
-          ++ lib.optional (config.netsecrets.client.password != "") 
-            "NETSECRETS_PASSWORD=${config.netsecrets.client.password}"
-          ++ lib.optional config.netsecrets.client.verbose 
-            "NETSECRETS_VERBOSE=1";
       };
     };
   };
