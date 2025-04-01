@@ -28,10 +28,26 @@ in {
     enable = lib.mkEnableOption "the netsecrets client";
 
     requestedSecrets = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          name = lib.mkOption {
+            type = lib.types.str;
+            description = "Name of the secret to request";
+          };
+          file = lib.mkOption {
+            type = lib.types.path;
+            default = "/var/lib/netsecrets/secret";
+            description = "Path where the secret will be stored";
+          };
+          restartUnits = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+            description = "Units to restart when this secret changes";
+          };
+        };
+      });
       default = [];
-      example = ["dockerswarm" "k8stoken"];
-      description = "List of secret names to request from server";
+      description = "List of secrets to request from server";
     };
 
     ip = lib.mkOption {
@@ -56,7 +72,7 @@ in {
   options.netsecrets.secrets = lib.mkOption {
     type = lib.types.attrsOf secretType;
     default = {};
-    description = "Configuration for individual secrets";
+    description = "Configuration for manually managed secrets";
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -86,16 +102,33 @@ in {
       '';
     }
 
-    # Automatically create default secret configurations for requested secrets
-    (lib.listToAttrs (map (name: lib.nameValuePair name {
-      netsecrets.secrets.${name} = {
-        file = "/var/lib/netsecrets/${name}";
-        value = null;
-        restartUnits = [];
+    # Services for requested secrets
+    (lib.mkMerge (map (secret: {
+      systemd.services."netsecrets-fetch-${secret.name}" = {
+        description = "Fetch secret ${secret.name}";
+        script = ''
+          ${netsecrets.send} get ${secret.name} > ${secret.file}
+          chmod 600 ${secret.file}
+        '';
+        serviceConfig = {
+          Type = "oneshot";
+          User = "root";
+        };
+      };
+      
+    } // lib.optionalAttrs (secret.restartUnits != []) {
+      systemd.services."netsecrets-restart-${secret.name}" = {
+        description = "Restart services for secret ${secret.name}";
+        wantedBy = ["netsecrets-fetch-${secret.name}.service"];
+        script = lib.concatMapStrings (unit: "systemctl try-restart ${unit}\n") secret.restartUnits;
+        serviceConfig = {
+          Type = "oneshot";
+          User = "root";
+        };
       };
     }) cfg.requestedSecrets))
 
-    # Create fetch services for all secrets (both requested and manually configured)
+    # Services for manually configured secrets
     (lib.mapAttrs (name: secret: {
       systemd.services."netsecrets-fetch-${name}" = {
         description = "Fetch secret ${name}";
@@ -110,7 +143,6 @@ in {
       };
     }) config.netsecrets.secrets)
 
-    # Create restart services where needed
     (lib.mapAttrs (name: secret: lib.optionalAttrs (secret.restartUnits != []) {
       systemd.services."netsecrets-restart-${name}" = {
         description = "Restart services for secret ${name}";
