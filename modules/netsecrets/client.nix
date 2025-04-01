@@ -1,80 +1,116 @@
-{
-  config,
-  lib,
-  pkgs,
-  ...
-}: let
-  cfg = config.netsecrets;
-  netsecrets = import ../lib/default.nix {inherit pkgs;};
-in {
-  options = {
-    netsecrets = {
-      client = lib.mkOption {
-        type = lib.types.submodule {
-          options = {
-            enable = lib.mkOption {
-              description = "Whether to enable the netsecrets client.";
-              type = lib.types.bool;
-              default = false;
-            };
-            ip = lib.mkOption {
-              description = "IP address for requesting secrets.";
-              type = lib.types.str;
-              default = "";
-            };
-            port = lib.mkOption {
-              description = "Port for requesting secrets.";
-              type = lib.types.str;
-              default = "";
-            };
-            verbose = lib.mkOption {
-              description = "Enable verbose logging for requesting secrets.";
-              type = lib.types.bool;
-              default = false;
-            };
-          };
-        };
-      };
+{ config, lib, pkgs, ... }:
 
-      secrets = lib.mkOption {
-        type = lib.types.submodule {
-          options = {
-            name = lib.mkOption {
-              type = lib.types.str;
-              default = config._module.args.name;
-              description = ''
-                Name of the file used in /var/lib/netsecrets
-              '';
-            };
-            restartUnits = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [];
-              example = ["apparmor.service"];
-              description = ''
-                Names of units to be restarted upon activation of secret.
-              '';
-            };
-          };
+let
+  cfg = config.netsecrets.client;
+  netsecrets = import ../lib/default.nix { inherit pkgs; };
+
+  makeSecretOption = name: lib.mkOption {
+    type = lib.types.submodule {
+      options = {
+        file = lib.mkOption {
+          type = lib.types.path;
+          default = "/var/lib/netsecrets/${name}";
+          description = "Path where the secret will be stored";
+        };
+        value = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "The secret value";
+        };
+        restartUnits = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [];
+          description = "Units to restart when this secret changes";
         };
       };
     };
+    default = {};
+    description = "Configuration for secret ${name}";
   };
 
-  config = lib.mkIf cfg.enable {
-    inherit (cfg) secrets;
+  secretsOptions = builtins.listToAttrs 
+    (map (name: { name = name; value = makeSecretOption name; }) 
+    cfg.requestedSecrets);
 
-    services = {
-      netsecrets-client = {
+in {
+  options.netsecrets.client = {
+    enable = lib.mkEnableOption "the netsecrets client";
+    requestedSecrets = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      example = ["dockerswarm" "k8stoken"];
+      description = "List of secret names to request from server";
+    };
+    ip = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "IP address for requesting secrets";
+    };
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 8080;
+      description = "Port for requesting secrets";
+    };
+    verbose = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Enable verbose logging";
+    };
+  };
+
+  options.netsecrets.secrets = secretsOptions;
+
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    {
+      system.activationScripts.netsecrets-dir = ''
+        mkdir -p /var/lib/netsecrets
+        chmod 700 /var/lib/netsecrets
+      '';
+      
+      systemd.services.netsecrets-client = {
         description = "NetSecrets Client";
         wantedBy = ["multi-user.target"];
         after = ["network-online.target"];
         wants = ["network-online.target"];
         serviceConfig = {
-          ExecStart = netsecrets.send;
-          Restart = "always";
+          ExecStart = "${netsecrets.send}";
+          Restart = "on-failure";
+          User = "root";
+          EnvironmentFile = "/etc/netsecrets/client.conf";
+        };
+      };
+
+      environment.etc."netsecrets/client.conf".text = ''
+        NETSECRETS_SERVER_IP=${cfg.ip}
+        NETSECRETS_SERVER_PORT=${toString cfg.port}
+        ${lib.optionalString cfg.verbose "NETSECRETS_VERBOSE=1"}
+      '';
+    }
+
+    (lib.mapAttrs (name: secret: {
+      systemd.services."netsecrets-fetch-${name}" = {
+        description = "Fetch secret ${name}";
+        script = ''
+          ${netsecrets.send} get ${name} > ${secret.file}
+          chmod 600 ${secret.file}
+        '';
+        serviceConfig = {
+          Type = "oneshot";
           User = "root";
         };
       };
-    };
-  };
+    }) config.netsecrets.secrets)
+
+    (lib.mapAttrs (name: secret: lib.optionalAttrs (secret.restartUnits != []) {
+      systemd.services."netsecrets-restart-${name}" = {
+        description = "Restart services for secret ${name}";
+        wantedBy = ["netsecrets-fetch-${name}.service"];
+        script = lib.concatMapStrings (unit: "systemctl try-restart ${unit}\n") secret.restartUnits;
+        serviceConfig = {
+          Type = "oneshot";
+          User = "root";
+        };
+      };
+    }) config.netsecrets.secrets)
+  ]);
 }
