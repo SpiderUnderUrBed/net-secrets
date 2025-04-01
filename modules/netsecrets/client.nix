@@ -87,14 +87,15 @@ in {
         '';
         Restart = "on-failure";
         User = "root";
-        Environment = [
-          "NETSECRETS_SERVER=${config.netsecrets.client.server}"
-          "NETSECRETS_PORT=${toString config.netsecrets.client.port}"
-          ${lib.optionalString (config.netsecrets.client.password != "") 
-            "NETSECRETS_PASSWORD=${config.netsecrets.client.password}"}
-          ${lib.optionalString config.netsecrets.client.verbose 
-            "NETSECRETS_VERBOSE=1"}
-        ];
+        Environment =
+          [ "NETSECRETS_SERVER=${config.netsecrets.client.server}"
+            "NETSECRETS_PORT=${toString config.netsecrets.client.port}"
+          ]
+          ++ lib.optional (config.netsecrets.client.password != "") 
+            "NETSECRETS_PASSWORD=${config.netsecrets.client.password}"
+          ++ lib.optional config.netsecrets.client.verbose 
+            "NETSECRETS_VERBOSE=1";
+
       };
     };
   };
