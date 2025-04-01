@@ -2,29 +2,14 @@
 
 let
   netsecrets = import ../lib/default.nix { inherit pkgs; };
-
-  secretType = lib.types.submodule {
-    options = {
-      file = lib.mkOption {
-        type = lib.types.path;
-        description = "Path where the secret will be stored";
-      };
-      restartUnits = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Units to restart when this secret changes";
-      };
-    };
-  };
-
 in {
   options.netsecrets.client = {
     enable = lib.mkEnableOption "the netsecrets client";
 
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf secretType;
-      default = {};
-      description = "Secrets to fetch from the server";
+    secretsFile = lib.mkOption {
+      type = lib.types.path;
+      default = "/etc/netsecrets/secrets.json";
+      description = "Path to JSON file defining secrets to fetch";
     };
 
     ip = lib.mkOption {
@@ -48,59 +33,53 @@ in {
 
   config = let
     cfg = config.netsecrets.client;
-  in lib.mkIf cfg.enable (lib.mkMerge [
-    {
-      system.activationScripts.netsecrets-dir = ''
-        mkdir -p /var/lib/netsecrets
-        chmod 700 /var/lib/netsecrets
-      '';
+  in lib.mkIf cfg.enable {
+    system.activationScripts.netsecrets-dir = ''
+      mkdir -p /var/lib/netsecrets
+      chmod 700 /var/lib/netsecrets
+    '';
 
-      systemd.services.netsecrets-client = {
-        description = "NetSecrets Client";
-        wantedBy = ["multi-user.target"];
-        after = ["network-online.target"];
-        wants = ["network-online.target"];
-        serviceConfig = {
-          ExecStart = "${netsecrets.send}";
-          Restart = "on-failure";
-          User = "root";
-          EnvironmentFile = "/etc/netsecrets/client.conf";
-        };
+    environment.etc."netsecrets/client.conf".text = ''
+      NETSECRETS_SERVER_IP=${cfg.ip}
+      NETSECRETS_SERVER_PORT=${toString cfg.port}
+      ${lib.optionalString cfg.verbose "NETSECRETS_VERBOSE=1"}
+    '';
+
+    systemd.services.netsecrets-client = {
+      description = "NetSecrets Client";
+      wantedBy = ["multi-user.target"];
+      after = ["network-online.target"];
+      wants = ["network-online.target"];
+      serviceConfig = {
+        ExecStart = "${pkgs.writeShellScript "netsecrets-start" ''
+          set -e
+          ${netsecrets.send} fetch-all \
+            --config ${cfg.secretsFile} \
+            --output-dir /var/lib/netsecrets
+        ''}";
+        Restart = "on-failure";
+        User = "root";
+        EnvironmentFile = "/etc/netsecrets/client.conf";
       };
+    };
 
-      environment.etc."netsecrets/client.conf".text = ''
-        NETSECRETS_SERVER_IP=${cfg.ip}
-        NETSECRETS_SERVER_PORT=${toString cfg.port}
-        ${lib.optionalString cfg.verbose "NETSECRETS_VERBOSE=1"}
-      '';
-    }
-
-    # Create services for each secret
-    (lib.mapAttrs (name: secret: {
-      systemd.services."netsecrets-fetch-${name}" = {
-        description = "Fetch secret ${name}";
-        script = ''
-          ${netsecrets.send} get ${name} > ${secret.file}
-          chmod 600 ${secret.file}
-        '';
-        serviceConfig = {
-          Type = "oneshot";
-          User = "root";
-        };
+    systemd.services.netsecrets-restarter = {
+      description = "Restart services affected by secret changes";
+      wantedBy = ["netsecrets-client.service"];
+      after = ["netsecrets-client.service"];
+      serviceConfig = {
+        Type = "oneshot";
+        User = "root";
+        ExecStart = "${pkgs.writeShellScript "netsecrets-restart" ''
+          set -e
+          if [ -f "${cfg.secretsFile}" ]; then
+            ${pkgs.jq}/bin/jq -r 'to_entries[] | select(.value.restartUnits != null) | .value.restartUnits[]' \
+              "${cfg.secretsFile}" | sort -u | while read unit; do
+              systemctl try-restart "$unit" || true
+            done
+          fi
+        ''}";
       };
-    }) cfg.secrets)
-
-    # Create restart services where needed
-    (lib.mapAttrs (name: secret: lib.optionalAttrs (secret.restartUnits != []) {
-      systemd.services."netsecrets-restart-${name}" = {
-        description = "Restart services for secret ${name}";
-        wantedBy = ["netsecrets-fetch-${name}.service"];
-        script = lib.concatMapStrings (unit: "systemctl try-restart ${unit}\n") secret.restartUnits;
-        serviceConfig = {
-          Type = "oneshot";
-          User = "root";
-        };
-      };
-    }) cfg.secrets)
-  ]);
+    };
+  };
 }
