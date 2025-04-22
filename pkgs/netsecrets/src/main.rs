@@ -63,11 +63,7 @@ fn get_env_var_or_required_arg<T: std::str::FromStr>(env_var: &str, arg: Option<
 fn parse_fallbacks(fallbacks: Option<String>) -> Option<Vec<IpAddr>> {
     fallbacks
         .or_else(|| env::var("NETSECRETS_FALLBACKS").ok())
-        .map(|s| {
-            s.split(',')
-                .filter_map(|ip_str| ip_str.trim().parse().ok())
-                .collect()
-        })
+        .map(|s| s.split(',').filter_map(|ip| ip.trim().parse().ok()).collect())
 }
 
 fn start_server(
@@ -80,103 +76,91 @@ fn start_server(
 ) {
     let listener = TcpListener::bind((ip, port)).expect("Failed to bind server");
     println!("Server started on {}:{}", ip, port);
-    
-    if verbose {
-        println!("Secrets stored: {:?}", secrets);
-    }
 
     for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                let peer_ip = stream.peer_addr().unwrap().ip();
-                let mut buffer = [0; 1024];
-                
-                match stream.read(&mut buffer) {
-                    Ok(size) => {
-                        let request = String::from_utf8_lossy(&buffer[..size]);
-                        if verbose {
-                            println!("Request from {}: {}", peer_ip, request);
-                        }
+        if let Ok(mut stream) = stream {
+            let peer_ip = stream.peer_addr().unwrap().ip();
+            let mut buffer = [0; 1024];
 
-                        let mut parts = request.split_whitespace();
-                        let req_password = parts.next().unwrap_or("");
-                        let requested_secrets = parts.next().unwrap_or("");
+            if let Ok(size) = stream.read(&mut buffer) {
+                let request = String::from_utf8_lossy(&buffer[..size]);
+                let mut parts = request.split_whitespace();
+                let req_password = parts.next().unwrap_or("");
+                let requested = parts.next().unwrap_or("");
 
-                        let password_ok = password.is_empty() || req_password == password;
-                        let ip_ok = authorized_ips.is_empty() || 
-                            authorized_ips.iter().any(|net| net.contains(peer_ip));
+                if verbose {
+                    println!("Authentication attempt from {} with password='{}'", peer_ip, req_password);
+                }
 
-                        if password_ok && ip_ok {
-                            let response = requested_secrets.split(',')
-                                .filter(|s| !s.is_empty())
-                                .map(|name| {
-                                    secrets.get(name)
-                                        .map(|val| format!("{}={}", name, val))
-                                        .unwrap_or_else(|| format!("{}=Secret not found", name))
-                                })
-                                .collect::<Vec<_>>()
-                                .join(",");
-                            
-                            stream.write_all(response.as_bytes()).unwrap();
+                let password_ok = password.is_empty() || req_password == password;
+                let ip_ok = authorized_ips.is_empty() || authorized_ips.iter().any(|net| net.contains(peer_ip));
+
+                if verbose {
+                    println!("Authentication {}", if password_ok && ip_ok { "succeeded" } else { "failed" });
+                }
+
+                if password_ok && ip_ok {
+                    let mut response_parts = Vec::new();
+                    for name in requested.split(',').filter(|s| !s.is_empty()) {
+                        if let Some(val) = secrets.get(name) {
+                            if verbose {
+                                println!("Retrieved secret: {}={}", name, val);
+                            }
+                            response_parts.push(format!("{}={}", name, val));
                         } else {
-                            let msg = match (password_ok, ip_ok) {
-                                (false, false) => "Invalid password and IP",
-                                (false, _) => "Invalid password",
-                                (_, false) => "Invalid IP",
-                                _ => "",
-                            };
-                            stream.write_all(msg.as_bytes()).unwrap();
+                            if verbose {
+                                println!("Failed to retrieve secret: {}", name);
+                            }
+                            response_parts.push(format!("{}=Secret not found", name));
                         }
                     }
-                    Err(e) => eprintln!("Read error: {}", e),
+                    let response = response_parts.join(",");
+                    let _ = stream.write_all(response.as_bytes());
+                } else {
+                    let msg = match (password_ok, ip_ok) {
+                        (false, false) => "Invalid password and IP",
+                        (false, _) => "Invalid password",
+                        (_, false) => "Invalid IP",
+                        _ => "",
+                    };
+                    let _ = stream.write_all(msg.as_bytes());
                 }
             }
-            Err(e) => eprintln!("Connection error: {}", e),
         }
     }
 }
 
 fn query_fallback(ip: IpAddr, port: u16, password: &str, secret: &str, verbose: bool) -> Option<String> {
     let socket = SocketAddr::new(ip, port);
-    match TcpStream::connect_timeout(&socket, Duration::from_secs(5)) {
-        Ok(mut stream) => {
-            stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
-            let message = format!("{} {}", password, secret);
-            
-            if verbose {
-                println!("Querying fallback {} for {}", ip, secret);
-            }
-
-            if let Err(e) = stream.write_all(message.as_bytes()) {
-                if verbose { eprintln!("Fallback write error: {}", e); }
-                return None;
-            }
-
-            let mut response = String::new();
-            match stream.read_to_string(&mut response) {
-                Ok(_) => response.splitn(2, '=')
-                    .nth(1)
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| s != "Secret not found"),
-                Err(e) => {
-                    if verbose { eprintln!("Fallback read error: {}", e); }
-                    None
-                }
-            }
-        }
-        Err(e) => {
-            if verbose { eprintln!("Fallback connect error: {}", e); }
-            None
-        }
+    if verbose {
+        println!("Querying fallback {} for {}", ip, secret);
     }
+    if let Ok(mut stream) = TcpStream::connect_timeout(&socket, Duration::from_secs(5)) {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let message = format!("{} {}", password, secret);
+        if stream.write_all(message.as_bytes()).is_err() {
+            if verbose { eprintln!("Fallback write error"); }
+            return None;
+        }
+        let mut response = String::new();
+        if stream.read_to_string(&mut response).is_ok() {
+            let val = response.splitn(2, '=').nth(1).unwrap_or("").trim();
+            if val != "Secret not found" {
+                return Some(val.to_string());
+            }
+        }
+    } else if verbose {
+        eprintln!("Fallback connect error to {}", ip);
+    }
+    None
 }
 
 fn is_directory(path: &Path) -> bool {
     if path.exists() {
         path.is_dir()
     } else {
-        let path_str = path.to_str().unwrap_or("");
-        path_str.ends_with('/') || path_str.ends_with(std::path::MAIN_SEPARATOR)
+        let s = path.to_str().unwrap_or("");
+        s.ends_with('/') || s.ends_with(std::path::MAIN_SEPARATOR)
     }
 }
 
@@ -194,23 +178,13 @@ fn send_request(
         Ok(s) => s,
         Err(e) => {
             if verbose {
-                println!("Primary server failed: {}", e);
+                eprintln!("Primary server failed: {}", e);
             }
-            if let Some(fallback_ips) = &fallbacks {
-                for &ip in fallback_ips {
-                    let fallback_socket = SocketAddr::new(ip, port);
-                    match TcpStream::connect_timeout(&fallback_socket, Duration::from_secs(5)) {
-                        Ok(s) => {
-                            if verbose {
-                                println!("Connected to fallback {}", ip);
-                            }
-                            return send_request(ip, port, password, request_secrets, verbose, file_output, fallbacks);
-                        }
-                        Err(e) => {
-                            if verbose {
-                                println!("Fallback {} failed: {}", ip, e);
-                            }
-                        }
+            if let Some(ips) = &fallbacks {
+                for &ip in ips {
+                    if let Ok(s) = TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(5)) {
+                        if verbose { println!("Connected to fallback {}", ip); }
+                        return send_request(ip, port, password, request_secrets, verbose, file_output, fallbacks);
                     }
                 }
             }
@@ -218,38 +192,34 @@ fn send_request(
         }
     };
 
-    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let message = format!("{} {}", password, request_secrets);
-    stream.write_all(message.as_bytes()).expect("Failed to send request");
+    let _ = stream.write_all(message.as_bytes());
 
     let mut response = String::new();
     let mut secrets = HashMap::new();
-    
-    match stream.read_to_string(&mut response) {
-        Ok(_) => {
-            for part in response.split(',') {
-                let mut kv = part.splitn(2, '=');
-                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
-                    secrets.insert(k.trim().to_string(), v.trim().to_string());
-                }
+    if stream.read_to_string(&mut response).is_ok() {
+        for part in response.split(',') {
+            let mut kv = part.splitn(2, '=');
+            if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                secrets.insert(k.trim().to_string(), v.trim().to_string());
             }
         }
-        Err(e) => {
-            if verbose {
-                println!("Read failed: {}", e);
-            }
-        }
+    } else if verbose {
+        eprintln!("Read failed");
     }
 
-    if let Some(fallback_ips) = fallbacks {
-        let missing: Vec<_> = request_secrets.split(',')
-            .filter(|name| !secrets.contains_key(*name))
-            .collect();
-
+    if let Some(ips) = fallbacks {
+        let mut missing = Vec::new();
+        for name in request_secrets.split(',').filter(|s| !s.is_empty()) {
+            if !secrets.contains_key(name) {
+                missing.push(name.to_string());
+            }
+        }
         for name in missing {
-            for &ip in &fallback_ips {
-                if let Some(value) = query_fallback(ip, port, &password, name, verbose) {
-                    secrets.insert(name.to_string(), value);
+            for &ip in &ips {
+                if let Some(val) = query_fallback(ip, port, &password, &name, verbose) {
+                    secrets.insert(name.clone(), val);
                     break;
                 }
             }
@@ -257,114 +227,51 @@ fn send_request(
     }
 
     if verbose {
-        println!("Received secrets: {:?}", secrets);
+        for name in request_secrets.split(',').filter(|s| !s.is_empty()) {
+            match secrets.get(name) {
+                Some(val) => println!("Retrieved secret: {}={}", name, val),
+                None => println!("Failed to retrieve secret: {}", name),
+            }
+        }
     }
 
-    if let Some(output_path) = file_output {
-        let output_path = PathBuf::from(output_path);
-        
-        if is_directory(&output_path) {
-            fs::create_dir_all(&output_path).unwrap_or_else(|e| {
-                if e.kind() != std::io::ErrorKind::AlreadyExists {
-                    panic!("Failed to create output directory: {}", e);
-                }
-            });
-            
-            for (name, value) in secrets {
-                let secret_path = output_path.join(name);
-                let mut file = fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&secret_path)
-                    .unwrap_or_else(|e| panic!("Failed to open file {:?}: {}", secret_path, e));
-                
-                file.write_all(value.as_bytes())
-                    .unwrap_or_else(|e| panic!("Failed to write to file {:?}: {}", secret_path, e));
+    if let Some(path) = file_output {
+        let out = PathBuf::from(path);
+        if is_directory(&out) {
+            fs::create_dir_all(&out).unwrap();
+            for (k, v) in &secrets {
+                let _ = fs::write(out.join(k), v);
             }
         } else {
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent).unwrap_or_else(|e| {
-                    if e.kind() != std::io::ErrorKind::AlreadyExists {
-                        panic!("Failed to create parent directory: {}", e);
-                    }
-                });
-            }
-            
-            let mut file = fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&output_path)
-                .unwrap_or_else(|e| panic!("Failed to open file {:?}: {}", output_path, e));
-            
-            for (_, value) in secrets {
-                writeln!(file, "{}", value)
-                    .unwrap_or_else(|e| panic!("Failed to write to file {:?}: {}", output_path, e));
-            }
+            let content = secrets.values().cloned().collect::<Vec<_>>().join("\n");
+            let _ = fs::write(&out, content);
         }
     }
 }
 
 fn main() {
     let cli = Cli::parse();
-
     match cli.command {
-        Commands::Send {
-            server,
-            port,
-            password,
-            request_secrets,
-            verbose,
-            file_output,
-            fallbacks,
-        } => {
+        Commands::Send { server, port, password, request_secrets, verbose, file_output, fallbacks } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
             let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
             let password = get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password");
-            let request_secrets = get_env_var_or_required_arg(
-                "NETSECRETS_REQUEST_SECRETS", 
-                request_secrets, 
-                "request_secrets"
-            );
-            let fallback_ips = parse_fallbacks(fallbacks);
-
-            send_request(
-                server,
-                port,
-                password,
-                request_secrets,
-                verbose,
-                file_output,
-                fallback_ips,
-            );
+            let request = get_env_var_or_required_arg("NETSECRETS_REQUEST_SECRETS", request_secrets, "request_secrets");
+            let ips = parse_fallbacks(fallbacks);
+            send_request(server, port, password, request, verbose, file_output, ips);
         }
-        Commands::Receive {
-            authorized_ips,
-            server,
-            port,
-            password,
-            secrets,
-            verbose,
-        } => {
+        Commands::Receive { authorized_ips, server, password, port, secrets, verbose } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
             let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
             let password = get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password");
-
-            let secrets_map: HashMap<_, _> = secrets
-                .into_iter()
-                .flat_map(|s| s.split(',').map(|s| s.to_string()).collect::<Vec<_>>())
-                .filter(|s| !s.is_empty())
-                .map(|pair| {
-                    let mut kv = pair.splitn(2, '=');
-                    (
-                        kv.next().unwrap().trim().to_string(),
-                        kv.next().unwrap_or("").trim().to_string()
-                    )
-                })
-                .collect();
-
-            start_server(server, port, password, secrets_map, verbose, authorized_ips);
+            let mut map = HashMap::new();
+            for s in secrets {
+                let mut parts = s.splitn(2, '=');
+                if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                    map.insert(k.to_string(), v.to_string());
+                }
+            }
+            start_server(server, port, password, map, verbose, authorized_ips);
         }
     }
 }
