@@ -25,6 +25,15 @@ in
       type = lib.types.bool;
       default = false;
     };
+
+    systemdOverrides = lib.mkOption {
+      type = lib.types.attrsOf lib.types.anything;
+      default = {};
+      description = ''
+        Additional systemd service options for the netsecrets-daemon systemd unit.
+        These will override or be merged with the default serviceConfig.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -40,12 +49,15 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" "mongodb.service" ];
       wants = [ "network-online.target" ];
-      serviceConfig = {
-        ExecStart = "${netsecrets.receive}";
-        Restart = "always";
-        User = "root";
-        RuntimeDirectory = "netsecrets";
-      };
+      serviceConfig = lib.mkMerge [
+        {
+          ExecStart = "${netsecrets.receive}";
+          Restart = "always";
+          User = "root";
+          RuntimeDirectory = "netsecrets";
+        }
+        cfg.systemdOverrides
+      ];
     };
 
     users.users.netsecrets = {
