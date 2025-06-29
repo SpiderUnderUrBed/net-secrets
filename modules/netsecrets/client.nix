@@ -4,7 +4,7 @@ let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
   # Build the secrets attribute set with file paths
-  secretsFiles = lib.foldl' (acc: secret: 
+  secretsFiles = lib.foldl' (acc: secret:
     acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
   ) {} config.netsecrets.client.request_secrets;
 
@@ -18,8 +18,8 @@ let
     (lib.optionalString (cfg.password != "") "--password ${lib.escapeShellArg cfg.password} ") +
     (lib.optionalString cfg.verbose "--verbose ") +
     "--request_secrets ${secret} " +
-    "--file-output /var/lib/netsecrets/${secret} " +  # Fixed path - no double secret name
-    (lib.optionalString (cfg.fallbacks != []) 
+    "--file-output /var/lib/netsecrets/${secret} " +
+    (lib.optionalString (cfg.fallbacks != [])
       "--fallbacks ${lib.concatStringsSep "," cfg.fallbacks}");
 
 in {
@@ -65,6 +65,15 @@ in {
       default = false;
       description = "Enable verbose logging";
     };
+
+    systemdOverrides = lib.mkOption {
+      type = lib.types.attrsOf lib.types.anything;
+      default = {};
+      description = ''
+        Additional systemd service options for the netsecrets-client systemd unit.
+        These will override or be merged with the default serviceConfig.
+      '';
+    };
   };
 
   options.secrets = lib.mkOption {
@@ -90,8 +99,8 @@ in {
     '';
 
     # Set up tmpfiles for each secret
-    systemd.tmpfiles.rules = 
-      lib.mapAttrsToList (name: path: 
+    systemd.tmpfiles.rules =
+      lib.mapAttrsToList (name: path:
         "f ${path} 0600 root root -"
       ) secretsFiles;
 
@@ -101,14 +110,17 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      serviceConfig = {
-        ExecStart = pkgs.writeShellScript "fetch-secrets" ''
-          set -euo pipefail
-          ${lib.concatStringsSep "\n" (map buildNetsecretsCommand config.netsecrets.client.request_secrets)}
-        '';
-        Restart = "on-failure";
-        User = "root";
-      };
+      serviceConfig = lib.mkMerge [
+        {
+          ExecStart = pkgs.writeShellScript "fetch-secrets" ''
+            set -euo pipefail
+            ${lib.concatStringsSep "\n" (map buildNetsecretsCommand config.netsecrets.client.request_secrets)}
+          '';
+          Restart = "on-failure";
+          User = "root";
+        }
+        config.netsecrets.client.systemdOverrides
+      ];
     };
   };
 }
