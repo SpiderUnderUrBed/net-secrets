@@ -2,7 +2,8 @@
 
 let
   cfg = config.netsecrets.server;
-  netsecrets = import ../lib/default.nix { inherit pkgs; };
+#  netsecrets = import ../lib/default.nix { inherit pkgs; };
+  netsecrets = import ../../lib/default.nix { inherit pkgs; };
 in
 {
   options.netsecrets.server = {
