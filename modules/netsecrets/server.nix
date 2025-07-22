@@ -38,13 +38,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    services.mongodb = {
-      enable = true;
-      dbpath = "/var/lib/netsecrets/db";
-      pidFile = "/run/netsecrets/mongodb.pid";
-      user = "netsecrets";
-    };
-
     systemd.services.netsecrets-daemon = {
       description = "NetSecrets Daemon";
       wantedBy = [ "multi-user.target" ];
