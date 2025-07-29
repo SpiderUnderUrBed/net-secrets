@@ -1,29 +1,21 @@
-{
-  description = "Manage secrets over the network";
+outputs = {
+  self,
+  nixpkgs,
+  systems,
+}: let
+  eachSystem = nixpkgs.lib.genAttrs (import systems);
+in {
+  nixosModules.netsecrets = ./modules/netsecrets/default.nix;
+  nixosModules.default = self.nixosModules.netsecrets;
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    systems.url = "github:nix-systems/default";
-  };
+  overlays.default = import ./overlay.nix;
 
-  outputs = {
-    self,
-    nixpkgs,
-    systems,
-  }: let
-    eachSystem = nixpkgs.lib.genAttrs (import systems);
+  packages = eachSystem (system: let
+    pkgs = import nixpkgs {inherit system;};
+    netsecretsPkg = pkgs.callPackage ./pkgs/netsecrets.nix {};
   in {
-    nixosModules.netsecrets = ./modules/netsecrets/default.nix;
-    nixosModules.default = self.nixosModules.netsecrets;
-
-    overlays.default = import ./overlay.nix;
-
-    packages = eachSystem (system: let
-      pkgs = import nixpkgs {inherit system;};
-    in {
-      netsecrets = pkgs.callPackage ./pkgs/netsecrets.nix {};
-      lib = import ./lib {inherit pkgs;};
-      default = self.packages.${system}.netsecrets;
-    });
-  };
-}
+    netsecrets = netsecretsPkg;
+    lib = import ./lib {inherit pkgs;};
+    default = netsecretsPkg;  # no recursive self reference
+  });
+};
