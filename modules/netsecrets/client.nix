@@ -162,6 +162,21 @@ in {
           config.netsecrets.client.systemdInitrdOverrides
         ];
       };
+
+      # Initrd systemd service to copy secrets into real root after rootfs is mounted
+      boot.initrd.systemd.services.netsecrets-copy = {
+        description = "Copy netsecrets from initrd to real root";
+        wantedBy = [ "initrd-root-fs.target" ];
+        after = [ "initrd-root-fs.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStartPre = "mkdir -p /run/secrets";
+          ExecStart = ''
+            cp -a /var/lib/netsecrets/* /run/secrets/
+            chmod 600 /run/secrets/*
+          '';
+        };
+      };
     })
   ]);
 }
