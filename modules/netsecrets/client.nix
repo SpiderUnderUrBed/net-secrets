@@ -108,8 +108,8 @@ in {
 
       # Ensure secrets directory exists for normal boot
       system.activationScripts.netsecrets-dir = ''
-        mkdir -p /var/lib/netsecrets
-        chmod 700 /var/lib/netsecrets
+        ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
+        ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
       '';
 
       # Normal boot tmpfiles rules (create empty secret files with correct permissions)
@@ -127,7 +127,7 @@ in {
         serviceConfig = lib.mkMerge [
           {
             ExecStart = pkgs.writeShellScript "fetch-secrets" ''
-              set -euo pipefail
+              ${pkgs.coreutils}/bin/set -euo pipefail
               ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
             '';
             Restart = "on-failure";
@@ -137,6 +137,7 @@ in {
         ];
       };
     }
+
     (lib.mkIf config.netsecrets.client.enableInitrd {
       boot.initrd.secrets = lib.mapAttrs (name: path: pkgs.path) secretsFiles;
 
@@ -149,11 +150,11 @@ in {
         serviceConfig = lib.mkMerge [
           {
             ExecStartPre = ''
-              mkdir -p /var/lib/netsecrets
-              chmod 700 /var/lib/netsecrets
+              ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
+              ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
             '';
             ExecStart = pkgs.writeShellScript "fetch-secrets-initrd" ''
-              set -euo pipefail
+              ${pkgs.coreutils}/bin/set -euo pipefail
               ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
             '';
             Restart = "on-failure";
@@ -170,10 +171,10 @@ in {
         after = [ "initrd-root-fs.target" ];
         serviceConfig = {
           Type = "oneshot";
-          ExecStartPre = "mkdir -p /run/secrets";
+          ExecStartPre = "${pkgs.coreutils}/bin/mkdir -p /run/secrets";
           ExecStart = ''
-            cp -a /var/lib/netsecrets/* /run/secrets/
-            chmod 600 /run/secrets/*
+            ${pkgs.coreutils}/bin/cp -a /var/lib/netsecrets/* /run/secrets/
+            ${pkgs.coreutils}/bin/chmod 600 /run/secrets/*
           '';
         };
       };
