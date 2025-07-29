@@ -3,12 +3,14 @@
 let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
-  secretsFiles = lib.foldl' (acc: secret:
-    acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
-  ) {} config.netsecrets.client.request_secrets;
+  # DO NOT reference config here:
+  # secretsFiles = lib.foldl' (acc: secret:
+  #   acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
+  # ) {} config.netsecrets.client.request_secrets;
 
-  buildNetsecretsCommand = secret: let
-    cfg = config.netsecrets.client;
+  # Instead, defer this inside config block below, where config is in scope
+  buildNetsecretsCommand = secret: s: let
+    cfg = s.netsecrets.client;
   in
     "${netsecrets}/bin/netsecrets send " +
     "--server ${cfg.server} " +
@@ -21,56 +23,47 @@ let
       "--fallbacks ${lib.concatStringsSep "," cfg.fallbacks}");
 
 in {
-
   options.netsecrets.client = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Enable the secrets client";
     };
-
     enableInitrd = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Enable fetching secrets during initrd boot (initrd systemd service)";
     };
-
     server = lib.mkOption {
       type = lib.types.str;
       default = "";
       description = "Server IP address for requesting secrets";
     };
-
     port = lib.mkOption {
       type = lib.types.port;
       default = 8081;
       description = "Server port for requesting secrets";
     };
-
     password = lib.mkOption {
       type = lib.types.str;
       default = "";
       description = "Password for requesting secrets";
     };
-
     request_secrets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
       description = "List of secrets to request from server";
     };
-
     fallbacks = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
       description = "List of fallback servers";
     };
-
     verbose = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Enable verbose logging";
     };
-
     systemdOverrides = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {};
@@ -79,7 +72,6 @@ in {
         These will override or be merged with the default serviceConfig.
       '';
     };
-
     systemdInitrdOverrides = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {};
@@ -95,7 +87,12 @@ in {
     description = "Mapping of secret names to their file paths.";
   };
 
-  config = lib.mkIf config.netsecrets.client.enable {
+  config = lib.mkIf config.netsecrets.client.enable (let
+    secretsFiles = lib.foldl' (acc: secret:
+      acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
+    ) {} config.netsecrets.client.request_secrets;
+
+  in {
     assertions = [
       {
         assertion = config.netsecrets.client.server != "";
@@ -105,19 +102,16 @@ in {
 
     secrets = lib.mkOverride 0 (lib.mapAttrs (name: path: { file = path; }) secretsFiles);
 
-    # Ensure secrets directory exists (for normal boot)
     system.activationScripts.netsecrets-dir = ''
       mkdir -p /var/lib/netsecrets
       chmod 700 /var/lib/netsecrets
     '';
 
-    # Tmpfiles rules for normal boot
     systemd.tmpfiles.rules =
       lib.mapAttrsToList (name: path:
         "f ${path} 0600 root root -"
       ) secretsFiles;
 
-    # Client service to fetch secrets after boot
     systemd.services.netsecrets-client = {
       description = "NetSecrets Client";
       wantedBy = [ "multi-user.target" ];
@@ -127,7 +121,7 @@ in {
         {
           ExecStart = pkgs.writeShellScript "fetch-secrets" ''
             set -euo pipefail
-            ${lib.concatStringsSep "\n" (map buildNetsecretsCommand config.netsecrets.client.request_secrets)}
+            ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
           '';
           Restart = "on-failure";
           User = "root";
@@ -136,22 +130,18 @@ in {
       ];
     };
 
-    # If initrd fetching is enabled, add initrd service and related config
+    # Initrd service if enabled
     config = lib.mkIf config.netsecrets.client.enableInitrd {
-
-      # Ensure secrets directory exists in initrd
       system.initrd.activationScripts.netsecrets-dir = ''
         mkdir -p /var/lib/netsecrets
         chmod 700 /var/lib/netsecrets
       '';
 
-      # Tmpfiles rules in initrd
       system.initrd.tmpfiles.rules =
         lib.mapAttrsToList (name: path:
           "f ${path} 0600 root root -"
         ) secretsFiles;
 
-      # Initrd systemd service to fetch secrets
       system.initrd.systemd.services.netsecrets-client = {
         description = "NetSecrets Client (initrd)";
         wantedBy = [ "initrd-root-fs.target" ];
@@ -161,7 +151,7 @@ in {
           {
             ExecStart = pkgs.writeShellScript "fetch-secrets-initrd" ''
               set -euo pipefail
-              ${lib.concatStringsSep "\n" (map buildNetsecretsCommand config.netsecrets.client.request_secrets)}
+              ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
             '';
             Restart = "on-failure";
             User = "root";
@@ -170,5 +160,5 @@ in {
         ];
       };
     };
-  };
+  }));
 }
