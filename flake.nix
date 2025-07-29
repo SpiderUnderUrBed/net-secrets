@@ -3,12 +3,12 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    systems.url = "github:nix-systems/default";
+    # systems input can be omitted or replaced if you want to hardcode systems
   };
 
-  outputs = { self, nixpkgs, systems, ... }:
+  outputs = { self, nixpkgs, ... }:
     let
-      systemList = builtins.attrNames systems;
+      systemList = [ "x86_64-linux" ];  # hardcoded system list for simplicity
       eachSystem = nixpkgs.lib.genAttrs systemList;
     in {
       packages = eachSystem (system:
