@@ -3,7 +3,7 @@
 let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
-  # Helper function to build the netsecrets command string
+  # Helper to build the netsecrets command line for a secret
   buildNetsecretsCommand = secret: s: let
     cfg = s.netsecrets.client;
   in
@@ -139,12 +139,6 @@ in {
       };
     }
     (lib.mkIf config.netsecrets.client.enableInitrd {
-      # Ensure secrets directory exists in initrd
-      boot.initrd.activationScripts.netsecrets-dir = ''
-        mkdir -p /var/lib/netsecrets
-        chmod 700 /var/lib/netsecrets
-      '';
-
       # Tmpfiles rules for initrd
       boot.initrd.tmpfiles.rules =
         lib.mapAttrsToList (name: path:
@@ -159,6 +153,10 @@ in {
         wants = [ "network-online.target" ];
         serviceConfig = lib.mkMerge [
           {
+            ExecStartPre = ''
+              mkdir -p /var/lib/netsecrets
+              chmod 700 /var/lib/netsecrets
+            '';
             ExecStart = pkgs.writeShellScript "fetch-secrets-initrd" ''
               set -euo pipefail
               ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
