@@ -3,14 +3,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # systems input can be omitted or replaced if you want to hardcode systems
   };
 
   outputs = { self, nixpkgs, ... }:
     let
-      systemList = [ "x86_64-linux" ];  # hardcoded system list for simplicity
-      eachSystem = nixpkgs.lib.genAttrs systemList;
-    in {
+      systems = [ "x86_64-linux" ];  # hardcoded systems here
+      eachSystem = nixpkgs.lib.genAttrs systems;
+    in
+    {
       packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -18,8 +18,7 @@
         in {
           netsecrets = netsecretsPkg;
           default = netsecretsPkg;
-        }
-      );
+        });
 
       nixosModules.netsecrets = ./modules/netsecrets/default.nix;
       nixosModules.default = self.nixosModules.netsecrets;
