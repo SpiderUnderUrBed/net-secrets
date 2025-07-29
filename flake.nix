@@ -7,10 +7,9 @@
 
   outputs = { self, nixpkgs, ... }:
     let
-      systems = [ "x86_64-linux" ];  # hardcoded systems here
+      systems = [ "x86_64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs systems;
-    in
-    {
+    in {
       packages = eachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -18,7 +17,8 @@
         in {
           netsecrets = netsecretsPkg;
           default = netsecretsPkg;
-        });
+        }
+      );
 
       nixosModules.netsecrets = ./modules/netsecrets/default.nix;
       nixosModules.default = self.nixosModules.netsecrets;
