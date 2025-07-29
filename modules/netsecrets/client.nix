@@ -3,6 +3,7 @@
 let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
+  # Helper function to build the netsecrets command string
   buildNetsecretsCommand = secret: s: let
     cfg = s.netsecrets.client;
   in
@@ -17,47 +18,56 @@ let
       "--fallbacks ${lib.concatStringsSep "," cfg.fallbacks}");
 
 in {
+
   options.netsecrets.client = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Enable the secrets client";
     };
+
     enableInitrd = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Enable fetching secrets during initrd boot (initrd systemd service)";
     };
+
     server = lib.mkOption {
       type = lib.types.str;
       default = "";
       description = "Server IP address for requesting secrets";
     };
+
     port = lib.mkOption {
       type = lib.types.port;
       default = 8081;
       description = "Server port for requesting secrets";
     };
+
     password = lib.mkOption {
       type = lib.types.str;
       default = "";
       description = "Password for requesting secrets";
     };
+
     request_secrets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
       description = "List of secrets to request from server";
     };
+
     fallbacks = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
       description = "List of fallback servers";
     };
+
     verbose = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Enable verbose logging";
     };
+
     systemdOverrides = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {};
@@ -65,6 +75,7 @@ in {
         Additional systemd service options for the netsecrets-client systemd unit.
       '';
     };
+
     systemdInitrdOverrides = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {};
@@ -96,16 +107,19 @@ in {
 
       secrets = lib.mkOverride 0 (lib.mapAttrs (name: path: { file = path; }) secretsFiles);
 
+      # Ensure secrets directory exists for normal boot
       system.activationScripts.netsecrets-dir = ''
         mkdir -p /var/lib/netsecrets
         chmod 700 /var/lib/netsecrets
       '';
 
+      # Tmpfiles rules for normal boot
       systemd.tmpfiles.rules =
         lib.mapAttrsToList (name: path:
           "f ${path} 0600 root root -"
         ) secretsFiles;
 
+      # Normal boot systemd service to fetch secrets
       systemd.services.netsecrets-client = {
         description = "NetSecrets Client";
         wantedBy = [ "multi-user.target" ];
@@ -125,17 +139,20 @@ in {
       };
     }
     (lib.mkIf config.netsecrets.client.enableInitrd {
-      system.initrd.activationScripts.netsecrets-dir = ''
+      # Ensure secrets directory exists in initrd
+      boot.initrd.activationScripts.netsecrets-dir = ''
         mkdir -p /var/lib/netsecrets
         chmod 700 /var/lib/netsecrets
       '';
 
-      system.initrd.tmpfiles.rules =
+      # Tmpfiles rules for initrd
+      boot.initrd.tmpfiles.rules =
         lib.mapAttrsToList (name: path:
           "f ${path} 0600 root root -"
         ) secretsFiles;
 
-      system.initrd.systemd.services.netsecrets-client = {
+      # Initrd systemd service to fetch secrets early
+      boot.initrd.systemd.services.netsecrets-client = {
         description = "NetSecrets Client (initrd)";
         wantedBy = [ "initrd-root-fs.target" ];
         after = [ "network-online.target" ];
