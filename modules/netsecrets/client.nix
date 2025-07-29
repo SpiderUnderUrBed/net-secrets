@@ -3,7 +3,6 @@
 let
   netsecrets = pkgs.callPackage ../../pkgs/netsecrets.nix {};
 
-  # Helper to build the netsecrets command line for a secret
   buildNetsecretsCommand = secret: s: let
     cfg = s.netsecrets.client;
   in
@@ -113,7 +112,7 @@ in {
         chmod 700 /var/lib/netsecrets
       '';
 
-      # Tmpfiles rules for normal boot
+      # Normal boot tmpfiles rules (create empty secret files with correct permissions)
       systemd.tmpfiles.rules =
         lib.mapAttrsToList (name: path:
           "f ${path} 0600 root root -"
@@ -139,11 +138,7 @@ in {
       };
     }
     (lib.mkIf config.netsecrets.client.enableInitrd {
-      # Tmpfiles rules for initrd
-      boot.initrd.tmpfiles.rules =
-        lib.mapAttrsToList (name: path:
-          "f ${path} 0600 root root -"
-        ) secretsFiles;
+      boot.initrd.secrets = lib.mapAttrs (name: path: pkgs.path) secretsFiles;
 
       # Initrd systemd service to fetch secrets early
       boot.initrd.systemd.services.netsecrets-client = {
