@@ -98,7 +98,6 @@ in
       };
     };
 
-    # Properly define the secrets option
     secrets = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule ({ name, ... }: {
         options = {
@@ -115,7 +114,7 @@ in
 
   config = lib.mkIf config.netsecrets.client.enable (let
     secretsFiles = lib.foldl' (acc: secret:
-      acc // { "${secret}" = { file = "/var/lib/netsecrets/${secret}"; }
+      acc // { "${secret}" = { file = "/var/lib/netsecrets/${secret}"; }; }
     ) {} config.netsecrets.client.request_secrets;
 
     passwordPromptService = {
@@ -163,7 +162,6 @@ in
         }
       ];
 
-      # Properly set the secrets
       secrets = secretsFiles;
 
       system.activationScripts.netsecrets-dir = ''
@@ -192,7 +190,6 @@ in
       };
     }
 
-    # Initrd service (when enableInitrd is true)
     (lib.mkIf config.netsecrets.client.enableInitrd {
       boot.initrd.systemd.services.netsecrets-client = {
         description = "NetSecrets Client (initrd)";
@@ -216,21 +213,18 @@ in
       };
     })
 
-    # Password prompt handling (when enableInitrdPassword is true)
     (lib.mkIf config.netsecrets.client.enableInitrdPassword (lib.mkMerge [
       {
         boot.initrd.systemd.services.netsecrets-password = passwordPromptService;
         boot.initrd.systemd.services.netsecrets-password-copy = passwordCopyService;
       }
 
-      # Configure main service to use the password file
       {
         systemd.services.netsecrets-client.serviceConfig.Environment = [
           "NETSECRETS_PASSWORD_FILE=/run/secrets/netsecrets-password"
         ];
       }
 
-      # Configure initrd service to use the password file if both are enabled
       (lib.mkIf config.netsecrets.client.enableInitrd {
         boot.initrd.systemd.services.netsecrets-client.serviceConfig.Environment = [
           "NETSECRETS_PASSWORD_FILE=/run/netsecrets-password"
