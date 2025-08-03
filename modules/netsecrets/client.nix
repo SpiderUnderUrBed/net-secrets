@@ -154,7 +154,8 @@ in {
               ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
             '';
             ExecStart = pkgs.writeShellScript "fetch-secrets-initrd" ''
-              ${pkgs.coreutils}/bin/set -euo pipefail
+              #${pkgs.coreutils}/bin/set -euo pipefail
+              #set -euo pipefail
               ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
             '';
             Restart = "on-failure";
