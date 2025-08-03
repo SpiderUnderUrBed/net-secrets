@@ -16,8 +16,16 @@ let
     (lib.optionalString (cfg.fallbacks != [])
       "--fallbacks ${lib.concatStringsSep "," cfg.fallbacks}");
 
-in {
+in
 
+let
+  fetchSecretsInitrd = pkgs.writeShellScript "fetch-secrets-initrd" ''
+    ${pkgs.coreutils}/bin/set -euo pipefail
+    ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
+  '';
+in
+
+{
   options.netsecrets.client = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -70,17 +78,13 @@ in {
     systemdOverrides = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {};
-      description = ''
-        Additional systemd service options for the netsecrets-client systemd unit.
-      '';
+      description = "Additional systemd service options for the netsecrets-client systemd unit.";
     };
 
     systemdInitrdOverrides = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {};
-      description = ''
-        Additional systemd service options for the netsecrets-client initrd systemd unit.
-      '';
+      description = "Additional systemd service options for the netsecrets-client initrd systemd unit.";
     };
   };
 
@@ -106,19 +110,16 @@ in {
 
       secrets = lib.mkOverride 0 (lib.mapAttrs (name: path: { file = path; }) secretsFiles);
 
-      # Ensure secrets directory exists for normal boot
       system.activationScripts.netsecrets-dir = ''
         ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
         ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
       '';
 
-      # Normal boot tmpfiles rules (create empty secret files with correct permissions)
       systemd.tmpfiles.rules =
         lib.mapAttrsToList (name: path:
           "f ${path} 0600 root root -"
         ) secretsFiles;
 
-      # Normal boot systemd service to fetch secrets
       systemd.services.netsecrets-client = {
         description = "NetSecrets Client";
         wantedBy = [ "multi-user.target" ];
@@ -141,7 +142,6 @@ in {
     (lib.mkIf config.netsecrets.client.enableInitrd {
       boot.initrd.secrets = lib.mapAttrs (name: path: pkgs.path) secretsFiles;
 
-      # Initrd systemd service to fetch secrets early
       boot.initrd.systemd.services.netsecrets-client = {
         description = "NetSecrets Client (initrd)";
         wantedBy = [ "initrd-root-fs.target" ];
@@ -153,11 +153,7 @@ in {
               ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
               ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
             '';
-            ExecStart = pkgs.writeShellScript "fetch-secrets-initrd" ''
-              #${pkgs.coreutils}/bin/set -euo pipefail
-              #set -euo pipefail
-              ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
-            '';
+            ExecStart = "${fetchSecretsInitrd}";
             Restart = "on-failure";
             User = "root";
           }
@@ -165,7 +161,6 @@ in {
         ];
       };
 
-      # Initrd systemd service to copy secrets into real root after rootfs is mounted
       boot.initrd.systemd.services.netsecrets-copy = {
         description = "Copy netsecrets from initrd to real root";
         wantedBy = [ "initrd-root-fs.target" ];
