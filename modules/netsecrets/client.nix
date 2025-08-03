@@ -29,77 +29,93 @@ let
 in
 
 {
-  options.netsecrets.client = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Enable the secrets client";
+  options = {
+    netsecrets.client = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable the secrets client";
+      };
+
+      enableInitrd = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable fetching secrets during initrd boot";
+      };
+
+      enableInitrdPassword = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Prompt for password during initrd and pass to services";
+      };
+
+      server = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Server IP address for requesting secrets";
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8081;
+        description = "Server port for requesting secrets";
+      };
+
+      password = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Password for requesting secrets";
+      };
+
+      request_secrets = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "List of secrets to request from server";
+      };
+
+      fallbacks = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "List of fallback servers";
+      };
+
+      verbose = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable verbose logging";
+      };
+
+      systemdOverrides = lib.mkOption {
+        type = lib.types.attrsOf lib.types.anything;
+        default = {};
+        description = "Additional systemd service options for the netsecrets-client systemd unit.";
+      };
+
+      systemdInitrdOverrides = lib.mkOption {
+        type = lib.types.attrsOf lib.types.anything;
+        default = {};
+        description = "Additional systemd service options for the netsecrets-client initrd systemd unit.";
+      };
     };
 
-    enableInitrd = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Enable fetching secrets during initrd boot";
-    };
-
-    enableInitrdPassword = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Prompt for password during initrd and pass to services";
-    };
-
-    server = lib.mkOption {
-      type = lib.types.str;
-      default = "";
-      description = "Server IP address for requesting secrets";
-    };
-
-    port = lib.mkOption {
-      type = lib.types.port;
-      default = 8081;
-      description = "Server port for requesting secrets";
-    };
-
-    password = lib.mkOption {
-      type = lib.types.str;
-      default = "";
-      description = "Password for requesting secrets";
-    };
-
-    request_secrets = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      description = "List of secrets to request from server";
-    };
-
-    fallbacks = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      description = "List of fallback servers";
-    };
-
-    verbose = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Enable verbose logging";
-    };
-
-    systemdOverrides = lib.mkOption {
-      type = lib.types.attrsOf lib.types.anything;
+    # Properly define the secrets option
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule ({ name, ... }: {
+        options = {
+          file = lib.mkOption {
+            type = lib.types.path;
+            description = "Path to the secret file";
+          };
+        };
+      }));
       default = {};
-      description = "Additional systemd service options for the netsecrets-client systemd unit.";
-    };
-
-    systemdInitrdOverrides = lib.mkOption {
-      type = lib.types.attrsOf lib.types.anything;
-      default = {};
-      description = "Additional systemd service options for the netsecrets-client initrd systemd unit.";
+      description = "Mapping of secret names to their file paths";
     };
   };
 
   config = lib.mkIf config.netsecrets.client.enable (let
     secretsFiles = lib.foldl' (acc: secret:
-      acc // { "${secret}" = "/var/lib/netsecrets/${secret}"; }
+      acc // { "${secret}" = { file = "/var/lib/netsecrets/${secret}"; }
     ) {} config.netsecrets.client.request_secrets;
 
     passwordPromptService = {
@@ -147,14 +163,17 @@ in
         }
       ];
 
+      # Properly set the secrets
+      secrets = secretsFiles;
+
       system.activationScripts.netsecrets-dir = ''
         ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
         ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
       '';
 
       systemd.tmpfiles.rules =
-        lib.mapAttrsToList (name: path:
-          "f ${path} 0600 root root -"
+        lib.mapAttrsToList (name: secret:
+          "f ${secret.file} 0600 root root -"
         ) secretsFiles;
 
       systemd.services.netsecrets-client = {
