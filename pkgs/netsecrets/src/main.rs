@@ -25,6 +25,8 @@ enum Commands {
         port: Option<u16>,
         #[arg(short = 'P', long)]
         password: Option<String>,
+        #[arg(long = "password-file")]
+        password_file: Option<PathBuf>,
         #[arg(short = 'r', long = "request_secrets")]
         request_secrets: Option<String>,
         #[arg(short = 'v', long)]
@@ -41,6 +43,8 @@ enum Commands {
         server: Option<IpAddr>,
         #[arg(short = 'P', long)]
         password: Option<String>,
+        #[arg(long = "password-file")]
+        password_file: Option<PathBuf>,
         #[arg(short, long)]
         port: Option<u16>,
         #[arg(short = 'S', long)]
@@ -58,6 +62,13 @@ fn get_env_var_or_required_arg<T: std::str::FromStr>(env_var: &str, arg: Option<
     get_env_var_or_arg(env_var, arg).unwrap_or_else(|| {
         panic!("{} must be provided either as argument or through {}", field_name, env_var)
     })
+}
+
+fn read_password_from_file(path: &Path) -> String {
+    fs::read_to_string(path)
+        .expect("Failed to read password file")
+        .trim()
+        .to_string()
 }
 
 fn parse_fallbacks(fallbacks: Option<String>) -> Option<Vec<IpAddr>> {
@@ -226,15 +237,6 @@ fn send_request(
         }
     }
 
-    if verbose {
-        for name in request_secrets.split(',').filter(|s| !s.is_empty()) {
-            match secrets.get(name) {
-                Some(val) => println!("Retrieved secret: {}={}", name, val),
-                None => println!("Failed to retrieve secret: {}", name),
-            }
-        }
-    }
-
     if let Some(path) = file_output {
         let out = PathBuf::from(path);
         if is_directory(&out) {
@@ -252,18 +254,26 @@ fn send_request(
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Send { server, port, password, request_secrets, verbose, file_output, fallbacks } => {
+        Commands::Send { server, port, password, password_file, request_secrets, verbose, file_output, fallbacks } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
             let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
-            let password = get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password");
+            let password = if let Some(pf) = password_file {
+                read_password_from_file(&pf)
+            } else {
+                get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password")
+            };
             let request = get_env_var_or_required_arg("NETSECRETS_REQUEST_SECRETS", request_secrets, "request_secrets");
             let ips = parse_fallbacks(fallbacks);
             send_request(server, port, password, request, verbose, file_output, ips);
         }
-        Commands::Receive { authorized_ips, server, password, port, secrets, verbose } => {
+        Commands::Receive { authorized_ips, server, password, password_file, port, secrets, verbose } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
             let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
-            let password = get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password");
+            let password = if let Some(pf) = password_file {
+                read_password_from_file(&pf)
+            } else {
+                get_env_var_or_required_arg("NETSECRETS_PASSWORD", password, "password")
+            };
             let mut map = HashMap::new();
             for s in secrets {
                 let mut parts = s.splitn(2, '=');
