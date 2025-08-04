@@ -26,6 +26,14 @@ let
     ${pkgs.coreutils}/bin/set -euo pipefail
     ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
   '';
+
+  # Create a proper script for password prompting
+  askPasswordScript = pkgs.writeShellScript "ask-netsecrets-password" ''
+    set -euo pipefail
+    PASSWORD=$(${pkgs.systemd}/bin/systemd-ask-password --timeout=0 "Enter netsecrets server password:")
+    echo "$PASSWORD" > /run/netsecrets-password
+    chmod 600 /run/netsecrets-password
+  '';
 in
 
 {
@@ -123,15 +131,11 @@ in
       before = [ "initrd.target" ];
       serviceConfig = {
         Type = "oneshot";
+        StandardInput = "tty";
         StandardOutput = "tty";
         StandardError = "tty";
         TTYPath = "/dev/console";
-        ExecStart = pkgs.writeShellScript "ask-password" ''
-          PASSWORD=$(${pkgs.systemd}/bin/systemd-ask-password --timeout=0 "Enter netsecrets server password:")
-          echo "netsecrets-password" > /proc/self/attr/current
-          echo "$PASSWORD" > /run/netsecrets-password
-          chmod 600 /run/netsecrets-password
-        '';
+        ExecStart = askPasswordScript;
       };
     };
 
@@ -142,9 +146,12 @@ in
       before = [ "initrd.target" ];
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = ''
+        ExecStart = pkgs.writeShellScript "copy-password" ''
+          set -euo pipefail
           ${pkgs.coreutils}/bin/mkdir -p /run/secrets
-          ${pkgs.coreutils}/bin/cp -a /run/netsecrets-password /run/secrets/
+          if [ -f /run/netsecrets-password ]; then
+            ${pkgs.coreutils}/bin/cp /run/netsecrets-password /run/secrets/
+          fi
         '';
       };
     };
@@ -191,6 +198,11 @@ in
     }
 
     (lib.mkIf config.netsecrets.client.enableInitrd {
+      # Add systemd to initrd so systemd-ask-password is available
+      boot.initrd.systemd.extraBin = {
+        systemd-ask-password = "${pkgs.systemd}/bin/systemd-ask-password";
+      };
+
       boot.initrd.systemd.services.netsecrets-client = {
         description = "NetSecrets Client (initrd)";
         wantedBy = [ "initrd.target" ];
@@ -200,7 +212,8 @@ in
                lib.optional config.netsecrets.client.enableInitrdPassword "netsecrets-password.service";
         serviceConfig = lib.mkMerge [
           {
-            ExecStartPre = ''
+            ExecStartPre = pkgs.writeShellScript "prepare-netsecrets-dir" ''
+              set -euo pipefail
               ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
               ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
             '';
