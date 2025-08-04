@@ -135,7 +135,16 @@ in
         StandardOutput = "tty";
         StandardError = "tty";
         TTYPath = "/dev/console";
-        ExecStart = askPasswordScript;
+        # Use direct command instead of script to avoid dependency issues
+        ExecStart = [
+          ""  # Clear any existing ExecStart
+          "${pkgs.writeShellScript "ask-password-simple" ''
+            #!/bin/sh
+            PASSWORD=$(systemd-ask-password --timeout=0 "Enter netsecrets server password:")
+            echo "$PASSWORD" > /run/netsecrets-password
+            chmod 600 /run/netsecrets-password
+          ''}"
+        ];
       };
     };
 
@@ -198,9 +207,14 @@ in
     }
 
     (lib.mkIf config.netsecrets.client.enableInitrd {
-      # Add systemd to initrd so systemd-ask-password is available
+      # Add required binaries to initrd
       boot.initrd.systemd.extraBin = {
         systemd-ask-password = "${pkgs.systemd}/bin/systemd-ask-password";
+        mkdir = "${pkgs.coreutils}/bin/mkdir";
+        chmod = "${pkgs.coreutils}/bin/chmod";
+        echo = "${pkgs.coreutils}/bin/echo";
+        cp = "${pkgs.coreutils}/bin/cp";
+        sh = "${pkgs.bash}/bin/sh";
       };
 
       boot.initrd.systemd.services.netsecrets-client = {
@@ -212,11 +226,7 @@ in
                lib.optional config.netsecrets.client.enableInitrdPassword "netsecrets-password.service";
         serviceConfig = lib.mkMerge [
           {
-            ExecStartPre = pkgs.writeShellScript "prepare-netsecrets-dir" ''
-              set -euo pipefail
-              ${pkgs.coreutils}/bin/mkdir -p /var/lib/netsecrets
-              ${pkgs.coreutils}/bin/chmod 700 /var/lib/netsecrets
-            '';
+            ExecStartPre = "/bin/sh -c 'mkdir -p /var/lib/netsecrets; chmod 700 /var/lib/netsecrets'";
             ExecStart = fetchSecrets;
             Restart = "on-failure";
             User = "root";
@@ -228,8 +238,40 @@ in
 
     (lib.mkIf config.netsecrets.client.enableInitrdPassword (lib.mkMerge [
       {
-        boot.initrd.systemd.services.netsecrets-password = passwordPromptService;
-        boot.initrd.systemd.services.netsecrets-password-copy = passwordCopyService;
+        # Add systemd-ask-password and basic tools to initrd
+        boot.initrd.systemd.extraBin = {
+          systemd-ask-password = "${pkgs.systemd}/bin/systemd-ask-password";
+          sh = "${pkgs.bash}/bin/sh";
+        };
+
+        boot.initrd.systemd.services.netsecrets-password = {
+          description = "Prompt for netsecrets password during initrd";
+          requiredBy = [ "initrd.target" ];
+          before = [ "initrd.target" ];
+          serviceConfig = {
+            Type = "oneshot";
+            StandardInput = "tty";
+            StandardOutput = "tty";
+            StandardError = "tty";
+            TTYPath = "/dev/console";
+            ExecStart = [
+              "/bin/sh -c 'PASSWORD=$(systemd-ask-password --timeout=0 \"Enter netsecrets server password:\"); echo \"$PASSWORD\" > /run/netsecrets-password; chmod 600 /run/netsecrets-password'"
+            ];
+          };
+        };
+
+        boot.initrd.systemd.services.netsecrets-password-copy = {
+          description = "Copy netsecrets password to real root";
+          requiredBy = [ "initrd.target" ];
+          after = [ "netsecrets-password.service" ];
+          before = [ "initrd.target" ];
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = [
+              "/bin/sh -c 'mkdir -p /run/secrets; if [ -f /run/netsecrets-password ]; then cp /run/netsecrets-password /run/secrets/; fi'"
+            ];
+          };
+        };
       }
 
       {
