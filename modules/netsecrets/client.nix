@@ -8,17 +8,20 @@ let
     passwordArg = if cfg.enableInitrdPassword then "--password-file /run/netsecrets-password"
                  else if cfg.password != "" then "--password ${lib.escapeShellArg cfg.password}"
                  else "";
+    encryptionArg = if cfg.encryptionKey != "" then "--encryption-key ${lib.escapeShellArg cfg.encryptionKey}" else "";
+    insecureArg = if cfg.insecure then "--insecure" else "";
   in
     "${netsecrets}/bin/netsecrets send " +
     "--server ${cfg.server} " +
     "--port ${toString cfg.port} " +
     passwordArg + " " +
+    encryptionArg + " " +
+    insecureArg + " " +
     (lib.optionalString cfg.verbose "--verbose ") +
     "--request_secrets ${secret} " +
     "--file-output /var/lib/netsecrets/${secret} " +
     (lib.optionalString (cfg.fallbacks != [])
       "--fallbacks ${lib.concatStringsSep "," cfg.fallbacks}");
-
 in
 
 let
@@ -27,7 +30,6 @@ let
     ${lib.concatStringsSep "\n" (map (secret: buildNetsecretsCommand secret config) config.netsecrets.client.request_secrets)}
   '';
 
-  # Create a proper script for password prompting
   askPasswordScript = pkgs.writeShellScript "ask-netsecrets-password" ''
     set -euo pipefail
     PASSWORD=$(${pkgs.systemd}/bin/systemd-ask-password --timeout=0 "Enter netsecrets server password:")
@@ -75,6 +77,12 @@ in
         description = "Password for requesting secrets";
       };
 
+      encryptionKey = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Optional encryption key for secrets";
+      };
+
       request_secrets = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
@@ -85,6 +93,12 @@ in
         type = lib.types.listOf lib.types.str;
         default = [];
         description = "List of fallback servers";
+      };
+
+      insecure = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Disable TLS verification or other security checks";
       };
 
       verbose = lib.mkOption {
@@ -135,9 +149,8 @@ in
         StandardOutput = "tty";
         StandardError = "tty";
         TTYPath = "/dev/console";
-        # Use direct command instead of script to avoid dependency issues
         ExecStart = [
-          ""  # Clear any existing ExecStart
+          "" 
           "${pkgs.writeShellScript "ask-password-simple" ''
             #!/bin/sh
             PASSWORD=$(systemd-ask-password --timeout=0 "Enter netsecrets server password:")
@@ -238,7 +251,6 @@ in
 
     (lib.mkIf config.netsecrets.client.enableInitrdPassword (lib.mkMerge [
       {
-        # Add systemd-ask-password and basic tools to initrd
         boot.initrd.systemd.extraBin = {
           systemd-ask-password = "${pkgs.systemd}/bin/systemd-ask-password";
           sh = "${pkgs.bash}/bin/sh";

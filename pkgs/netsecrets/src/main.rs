@@ -8,10 +8,10 @@ use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use aes_gcm::aead::{Aead, KeyInit, OsRng, Nonce};
+use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::{Aead, KeyInit, Nonce, OsRng};
 use aes_gcm::{Aes256Gcm, Key};
 use sha2::{Digest, Sha256};
-use aes_gcm::aead::rand_core::RngCore;
 
 #[derive(Parser)]
 #[command(name = "netsecrets")]
@@ -67,8 +67,6 @@ enum Commands {
     },
 }
 
-// --- Encryption Helpers ---
-
 #[derive(Debug, Clone)]
 enum EncryptionMethod {
     None,
@@ -88,25 +86,19 @@ fn derive_key(key_str: &str) -> [u8; 32] {
     key
 }
 
-
 fn encrypt_data(data: &[u8], method: &EncryptionMethod) -> Vec<u8> {
     match method {
         EncryptionMethod::None => data.to_vec(),
         EncryptionMethod::Symmetric(key_bytes) => {
-            // Generate random nonce
             let mut nonce_bytes = [0u8; 12];
             OsRng.fill_bytes(&mut nonce_bytes);
 
-            // Create cipher and nonce
             let key = Key::<Aes256Gcm>::from_slice(key_bytes);
             let cipher = Aes256Gcm::new(key);
             let nonce = Nonce::<Aes256Gcm>::from_slice(&nonce_bytes);
 
-            // Encrypt
-            let ciphertext = cipher.encrypt(nonce, data)
-                .expect("Encryption failed");
+            let ciphertext = cipher.encrypt(nonce, data).expect("Encryption failed");
 
-            // Prepend nonce to ciphertext
             let mut result = nonce_bytes.to_vec();
             result.extend_from_slice(&ciphertext);
             result
@@ -128,7 +120,8 @@ fn decrypt_data(data: &[u8], method: &DecryptionMethod) -> Result<Vec<u8>, Strin
             let nonce = Nonce::<Aes256Gcm>::from_slice(&data[0..12]);
             let ciphertext = &data[12..];
 
-            cipher.decrypt(nonce, ciphertext)
+            cipher
+                .decrypt(nonce, ciphertext)
                 .map_err(|_| "AES decryption failed".to_string())
         }
     }
@@ -153,8 +146,6 @@ fn determine_decryption_method(insecure: bool, key: Option<String>) -> Decryptio
         DecryptionMethod::None
     }
 }
-
-// --- Utilities ---
 
 fn get_env_var_or_arg<T: std::str::FromStr>(env_var: &str, arg: Option<T>) -> Option<T> {
     arg.or_else(|| env::var(env_var).ok().and_then(|s| s.parse().ok()))
@@ -189,8 +180,6 @@ fn parse_fallbacks(fallbacks: Option<String>) -> Option<Vec<IpAddr>> {
                 .collect()
         })
 }
-
-// --- Server ---
 
 use std::net::Shutdown;
 
@@ -227,7 +216,6 @@ pub fn start_server(
                 stream.set_read_timeout(Some(Duration::from_secs(5)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
-                // Read full message length first
                 let mut len_bytes = [0u8; 4];
                 stream.read_exact(&mut len_bytes)?;
                 let len = u32::from_be_bytes(len_bytes) as usize;
@@ -235,10 +223,8 @@ pub fn start_server(
                 let mut buf = vec![0u8; len];
                 stream.read_exact(&mut buf)?;
 
-                let request_bytes =
-                    decrypt_data(&buf, &decryption_method).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-                    })?;
+                let request_bytes = decrypt_data(&buf, &decryption_method)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
                 let request_str = String::from_utf8_lossy(&request_bytes);
                 let mut parts = request_str.split_whitespace();
@@ -273,8 +259,6 @@ pub fn start_server(
     }
     Ok(())
 }
-
-// --- Client ---
 
 pub fn send_request(
     server: IpAddr,
@@ -319,8 +303,6 @@ pub fn send_request(
         println!("{}", response_str);
     }
 }
-
-// --- Main ---
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -400,8 +382,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let decryption_method = determine_decryption_method(insecure, encryption_key);
 
-            let authorized_ips: Option<Vec<IpAddr>> =
-                if authorized_ips.is_empty() { None } else { Some(authorized_ips.into_iter().map(|n| n.ip()).collect()) };
+            let authorized_ips: Option<Vec<IpAddr>> = if authorized_ips.is_empty() {
+                None
+            } else {
+                Some(authorized_ips.into_iter().map(|n| n.ip()).collect())
+            };
 
             start_server(
                 server,
