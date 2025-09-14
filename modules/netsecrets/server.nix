@@ -8,7 +8,7 @@ in
   options.netsecrets.server = {
     enable = lib.mkEnableOption "the netsecrets daemon";
 
-    server = lib.mkOption {
+    ip = lib.mkOption {
       description = "IP address for netsecrets server";
       type = lib.types.str;
       default = "";
@@ -83,7 +83,7 @@ in
         {
           ExecStart = lib.concatStringsSep " " [
             "${netsecrets.receive}"
-            (lib.optionalString (cfg.server != "") "--server ${cfg.server}")
+            (lib.optionalString (cfg.ip != "") "--server ${cfg.ip}")
             (lib.optionalString (cfg.port != "") "--port ${cfg.port}")
             (lib.optionalString (cfg.password != "") "--password ${cfg.password}")
             (lib.optionalString (cfg.password_file != "") "--password-file ${cfg.password_file}")
@@ -109,7 +109,7 @@ in
     users.groups.netsecrets = {};
 
     environment.etc."netsecrets/config.json".text = builtins.toJSON {
-      server = cfg.server;
+      server = cfg.ip;
       port = cfg.port;
       password = cfg.password;
       password_file = cfg.password_file;
