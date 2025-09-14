@@ -276,31 +276,143 @@ pub fn send_request(
         println!("Connecting to server: {}", socket);
     }
 
-    let mut stream = TcpStream::connect_timeout(&socket, Duration::from_secs(5))
-        .expect("Failed to connect to server");
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let secret_keys: Vec<&str> = request_secrets.split_whitespace().collect();
+    let mut results = Vec::new();
 
-    let message = format!("{} {}", password, request_secrets);
-    let encrypted_message = encrypt_data(message.as_bytes(), &encryption_method);
+    for secret_key in secret_keys {
+        if verbose {
+            println!("Requesting secret: {}", secret_key);
+        }
 
-    let len_bytes = (encrypted_message.len() as u32).to_be_bytes();
-    stream.write_all(&len_bytes).unwrap();
-    stream.write_all(&encrypted_message).unwrap();
+        let mut stream = match TcpStream::connect_timeout(&socket, Duration::from_secs(5)) {
+            Ok(stream) => stream,
+            Err(e) => {
+                eprintln!(
+                    "Failed to connect to server for secret '{}': {}",
+                    secret_key, e
+                );
 
-    let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes).unwrap();
-    let len = u32::from_be_bytes(len_bytes) as usize;
+                let mut fallback_stream = None;
+                if let Some(ref fallback_ips) = fallbacks {
+                    for fallback_ip in fallback_ips {
+                        let fallback_socket = SocketAddr::new(*fallback_ip, port);
+                        if verbose {
+                            println!("Trying fallback server: {}", fallback_socket);
+                        }
 
-    let mut response = vec![0u8; len];
-    stream.read_exact(&mut response).unwrap();
+                        match TcpStream::connect_timeout(&fallback_socket, Duration::from_secs(5)) {
+                            Ok(stream) => {
+                                fallback_stream = Some(stream);
+                                break;
+                            }
+                            Err(fallback_e) => {
+                                eprintln!(
+                                    "Fallback server {} failed: {}",
+                                    fallback_socket, fallback_e
+                                );
+                            }
+                        }
+                    }
+                }
 
-    let response_data = decrypt_data(&response, &decryption_method).unwrap_or(response);
-    let response_str = String::from_utf8_lossy(&response_data);
+                match fallback_stream {
+                    Some(stream) => stream,
+                    None => {
+                        eprintln!("All servers failed for secret: {}", secret_key);
+                        results.push(format!("{}: Connection failed", secret_key));
+                        continue;
+                    }
+                }
+            }
+        };
+
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+
+        let message = format!("{} {}", password, secret_key);
+        let encrypted_message = encrypt_data(message.as_bytes(), &encryption_method);
+
+        if let Err(e) = stream.write_all(&(encrypted_message.len() as u32).to_be_bytes()) {
+            eprintln!("Failed to send length for secret '{}': {}", secret_key, e);
+            results.push(format!("{}: Send failed", secret_key));
+            continue;
+        }
+
+        if let Err(e) = stream.write_all(&encrypted_message) {
+            eprintln!("Failed to send message for secret '{}': {}", secret_key, e);
+            results.push(format!("{}: Send failed", secret_key));
+            continue;
+        }
+
+        if let Err(e) = stream.flush() {
+            eprintln!("Failed to flush for secret '{}': {}", secret_key, e);
+            results.push(format!("{}: Send failed", secret_key));
+            continue;
+        }
+
+        let mut len_bytes = [0u8; 4];
+        if let Err(e) = stream.read_exact(&mut len_bytes) {
+            eprintln!(
+                "Failed to read response length for secret '{}': {}",
+                secret_key, e
+            );
+            results.push(format!("{}: Read failed", secret_key));
+            continue;
+        }
+
+        let len = u32::from_be_bytes(len_bytes) as usize;
+        if len > 1024 * 1024 {
+            eprintln!(
+                "Response too large for secret '{}': {} bytes",
+                secret_key, len
+            );
+            results.push(format!("{}: Response too large", secret_key));
+            continue;
+        }
+
+        let mut response = vec![0u8; len];
+        if let Err(e) = stream.read_exact(&mut response) {
+            eprintln!(
+                "Failed to read response data for secret '{}': {}",
+                secret_key, e
+            );
+            results.push(format!("{}: Read failed", secret_key));
+            continue;
+        }
+
+        let response_data = match decrypt_data(&response, &decryption_method) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!(
+                    "Failed to decrypt response for secret '{}': {}",
+                    secret_key, e
+                );
+                response
+            }
+        };
+
+        let response_str = String::from_utf8_lossy(&response_data);
+
+        if verbose {
+            println!("Received response for '{}': {}", secret_key, response_str);
+        }
+
+        results.push(format!("{}: {}", secret_key, response_str));
+
+        let _ = stream.shutdown(Shutdown::Both);
+    }
+
+    let final_output = results.join("\n");
 
     if let Some(ref path) = file_output {
-        fs::write(path, response_str.as_bytes()).expect("Failed to write secrets to file");
+        if let Err(e) = fs::write(path, final_output.as_bytes()) {
+            eprintln!("Failed to write secrets to file '{}': {}", path, e);
+            println!("{}", final_output);
+        } else if verbose {
+            println!("Secrets written to file: {}", path);
+        }
     } else {
-        println!("{}", response_str);
+        println!("{}", final_output);
     }
 }
 
