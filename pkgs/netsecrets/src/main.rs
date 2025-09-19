@@ -359,8 +359,11 @@ pub fn send_request(
             results.push(format!("{}: Read failed", secret_key));
             continue;
         }
+        //println!("DEBUG: Raw length bytes: {:02x} {:02x} {:02x} {:02x}", 
+         //len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]);
 
         let len = u32::from_be_bytes(len_bytes) as usize;
+        //println!("DEBUG: Parsed length: {}", len);
         if len > 1024 * 1024 {
             eprintln!(
                 "Response too large for secret '{}': {} bytes",
@@ -396,8 +399,8 @@ pub fn send_request(
         if verbose {
             println!("Received response for '{}': {}", secret_key, response_str);
         }
-
-        results.push(format!("{}: {}", secret_key, response_str));
+        results.push(response_str.to_string());
+        //results.push(format!("{}: {}", secret_key, response_str));
 
         let _ = stream.shutdown(Shutdown::Both);
     }
