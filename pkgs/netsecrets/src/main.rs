@@ -44,6 +44,8 @@ enum Commands {
         insecure: bool,
         #[arg(long = "encryption-key")]
         encryption_key: Option<String>,
+        #[arg(long = "encryption-key-file")]
+        encryption_key_file: Option<PathBuf>,
     },
     Receive {
         #[arg(short = 'a', long, value_delimiter = ',')]
@@ -64,6 +66,8 @@ enum Commands {
         insecure: bool,
         #[arg(long = "encryption-key")]
         encryption_key: Option<String>,
+        #[arg(long = "encryption-key-file")]
+        encryption_key_file: Option<PathBuf>,
     },
 }
 
@@ -167,6 +171,13 @@ fn get_env_var_or_required_arg<T: std::str::FromStr>(
 fn read_password_from_file(path: &Path) -> String {
     fs::read_to_string(path)
         .expect("Failed to read password file")
+        .trim()
+        .to_string()
+}
+
+fn read_encryption_key_from_file(path: &Path) -> String {
+    fs::read_to_string(path)
+        .expect("Failed to read encryption key file")
         .trim()
         .to_string()
 }
@@ -434,6 +445,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fallbacks,
             insecure,
             encryption_key,
+            encryption_key_file,
         } => {
             let server = get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server");
             let port = get_env_var_or_arg("NETSECRETS_PORT", port).unwrap_or(8080);
@@ -448,9 +460,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "request_secrets",
             );
 
+            let resolved_encryption_key = encryption_key_file
+                .map(|p| read_encryption_key_from_file(&p))
+                .or(encryption_key);
+
             let ips = parse_fallbacks(fallbacks);
-            let encryption_method = determine_encryption_method(insecure, encryption_key.clone());
-            let decryption_method = determine_decryption_method(insecure, encryption_key);
+            let encryption_method = determine_encryption_method(insecure, resolved_encryption_key.clone());
+            let decryption_method = determine_decryption_method(insecure, resolved_encryption_key);
 
             send_request(
                 server,
@@ -477,6 +493,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbose,
             insecure,
             encryption_key,
+            encryption_key_file,
         } => {
             let server =
                 get_env_var_or_required_arg("NETSECRETS_SERVER", server, "server").to_string();
@@ -495,7 +512,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let decryption_method = determine_decryption_method(insecure, encryption_key);
+            let resolved_encryption_key = encryption_key_file
+                .map(|p| read_encryption_key_from_file(&p))
+                .or(encryption_key);
+
+            let decryption_method = determine_decryption_method(insecure, resolved_encryption_key);
 
             let authorized_ips: Option<Vec<IpAddr>> = if authorized_ips.is_empty() {
                 None

@@ -56,6 +56,12 @@ in
       default = "";
     };
 
+    encryptionKeyFile = lib.mkOption {
+      description = "Path to file containing the encryption key for symmetric encryption";
+      type = lib.types.str;
+      default = "";
+    };
+
     insecure = lib.mkOption {
       description = "Disable TLS verification or other security checks";
       type = lib.types.bool;
@@ -90,7 +96,8 @@ in
             (lib.optionalString (cfg.secrets != []) "--request_secrets ${lib.concatStringsSep "," cfg.secrets}")
             (lib.optionalString (cfg.authorized_ips != []) "--authorized-ips ${lib.concatStringsSep "," cfg.authorized_ips}")
             (lib.optionalString cfg.verbose "--verbose")
-            (lib.optionalString (cfg.encryptionKey != "") "--encryption-key ${cfg.encryptionKey}")
+            (lib.optionalString (cfg.encryptionKeyFile != "") "--encryption-key-file ${cfg.encryptionKeyFile}")
+            (lib.optionalString (cfg.encryptionKey != "" && cfg.encryptionKeyFile == "") "--encryption-key ${cfg.encryptionKey}")
             (lib.optionalString cfg.insecure "--insecure")
           ];
           Restart = "always";
@@ -117,6 +124,7 @@ in
       authorized_ips = cfg.authorized_ips;
       verbose = cfg.verbose;
       encryptionKey = cfg.encryptionKey;
+      encryptionKeyFile = cfg.encryptionKeyFile;
       insecure = cfg.insecure;
     };
   };

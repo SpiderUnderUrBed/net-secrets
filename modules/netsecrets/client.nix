@@ -8,7 +8,8 @@ let
     passwordArg = if cfg.enableInitrdPassword then "--password-file /run/netsecrets-password"
                  else if cfg.password != "" then "--password ${lib.escapeShellArg cfg.password}"
                  else "";
-    encryptionArg = if cfg.encryptionKey != "" then "--encryption-key ${lib.escapeShellArg cfg.encryptionKey}" else "";
+    encryptionArg = if cfg.encryptionKeyFile != "" then "--encryption-key-file ${lib.escapeShellArg cfg.encryptionKeyFile}"
+                 else if cfg.encryptionKey != "" then "--encryption-key ${lib.escapeShellArg cfg.encryptionKey}" else "";
     insecureArg = if cfg.insecure then "--insecure" else "";
   in
     "${netsecrets}/bin/netsecrets send " +
@@ -81,6 +82,12 @@ in
         type = lib.types.str;
         default = "";
         description = "Optional encryption key for secrets";
+      };
+
+      encryptionKeyFile = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Path to file containing the encryption key for secrets";
       };
 
       request_secrets = lib.mkOption {
