@@ -88,7 +88,7 @@ in
       serviceConfig = lib.mkMerge [
         {
           ExecStart = lib.concatStringsSep " " [
-            "${netsecrets.receive}"
+            "${netsecrets.receive} receive"
             (lib.optionalString (cfg.ip != "") "--server ${cfg.ip}")
             (lib.optionalString (cfg.port != "") "--port ${cfg.port}")
             (lib.optionalString (cfg.password != "") "--password ${cfg.password}")
